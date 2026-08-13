@@ -30,7 +30,9 @@ export async function POST(
 
   const dataset = await getDataset(id);
   if (!dataset) return Response.json({ error: "Unknown dataset" }, { status: 404 });
-  if (dataset.rowCount === 0) {
+  // Both are set by parse. Without the headers every detector would run over an
+  // empty column list and report a spotless dataset, which is worse than failing.
+  if (dataset.rowCount === 0 || dataset.headers.length === 0) {
     return Response.json({ error: "Parse the file first" }, { status: 409 });
   }
 
