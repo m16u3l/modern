@@ -230,6 +230,125 @@ export async function buildSummary(
   };
 }
 
+export type TraceEntry = {
+  issueId: string;
+  type: IssueType;
+  severity: string;
+  columnKey: string | null;
+  evidence: string;
+  detectedBy: string;
+  /** True while the issue is still queued for the model. */
+  ambiguous: boolean;
+  rowIndexes: number[];
+  suggestion: {
+    id: string;
+    action: string;
+    source: string;
+    confidence: number;
+    rationale: string;
+    currentValue: string | null;
+    proposedValue: string | null;
+    status: string;
+    finalValue: string | null;
+  } | null;
+  decision: {
+    reviewStatus: string;
+    beforeState: Record<string, string> | null;
+    afterState: Record<string, string> | null;
+    decidedAt: Date;
+  } | null;
+};
+
+/**
+ * Every finding with whatever happened to it afterwards — the proposal it
+ * produced, and the decision a human took. One row per issue, so a finding that
+ * never reached a card is as visible as one that was applied.
+ */
+export async function loadTrace(datasetId: string): Promise<TraceEntry[]> {
+  const db = getDb();
+
+  const [issueRecords, suggestionRecords, auditRecords, rowRecords] =
+    await Promise.all([
+      db.select().from(schema.issues).where(eq(schema.issues.datasetId, datasetId)),
+      db
+        .select()
+        .from(schema.suggestions)
+        .where(eq(schema.suggestions.datasetId, datasetId)),
+      db.select().from(schema.audit).where(eq(schema.audit.datasetId, datasetId)),
+      db
+        .select({ id: schema.rows.id, rowIndex: schema.rows.rowIndex })
+        .from(schema.rows)
+        .where(eq(schema.rows.datasetId, datasetId)),
+    ]);
+
+  const suggestionByIssue = new Map(
+    suggestionRecords.map((record) => [record.issueId, record]),
+  );
+  const auditBySuggestion = new Map(
+    auditRecords.map((record) => [record.suggestionId, record]),
+  );
+  const rowIndexById = new Map(
+    rowRecords.map((record) => [record.id, record.rowIndex]),
+  );
+
+  return issueRecords
+    .map((issue) => {
+      const suggestion = suggestionByIssue.get(issue.id);
+      const decision = suggestion ? auditBySuggestion.get(suggestion.id) : undefined;
+
+      return {
+        issueId: issue.id,
+        type: issue.type,
+        severity: issue.severity,
+        columnKey: issue.columnKey,
+        evidence: issue.evidence,
+        detectedBy: issue.detectedBy,
+        ambiguous: issue.ambiguous,
+        rowIndexes: issue.rowIds
+          .map((rowId) => rowIndexById.get(rowId))
+          .filter((index): index is number => index !== undefined)
+          .map((index) => index + 1),
+        suggestion: suggestion
+          ? {
+              id: suggestion.id,
+              action: suggestion.action,
+              source: suggestion.source,
+              confidence: suggestion.confidence,
+              rationale: suggestion.rationale,
+              currentValue: suggestion.currentValue,
+              proposedValue: suggestion.proposedValue,
+              status: suggestion.status,
+              finalValue: suggestion.finalValue,
+            }
+          : null,
+        decision: decision
+          ? {
+              reviewStatus: decision.reviewStatus,
+              beforeState: decision.beforeState,
+              afterState: decision.afterState,
+              decidedAt: decision.decidedAt,
+            }
+          : null,
+      };
+    })
+    .sort(
+      (a, b) =>
+        a.type.localeCompare(b.type) ||
+        (a.columnKey ?? "").localeCompare(b.columnKey ?? "") ||
+        (a.rowIndexes[0] ?? 0) - (b.rowIndexes[0] ?? 0),
+    );
+}
+
+/** What the model cost on this dataset, one row per batch. */
+export async function loadUsage(datasetId: string) {
+  const db = getDb();
+  return db
+    .select()
+    .from(schema.llmUsage)
+    .where(eq(schema.llmUsage.datasetId, datasetId))
+    .orderBy(schema.llmUsage.createdAt);
+}
+
 /** Share of suggestions the rules engine produced. The headline demo metric. */
 export async function ruleShare(datasetId: string): Promise<number> {
   const db = getDb();

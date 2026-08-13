@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { Download, FileJson } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
@@ -173,7 +174,15 @@ function ExportPanel({
 
       <p className="text-muted-foreground text-xs">
         The audit log lists every decision with its before and after value, which
-        detector proposed it, and whether a human accepted it.
+        detector proposed it, and whether a human accepted it. The same trail is
+        browsable at{" "}
+        <Link
+          href={`/datasets/${datasetId}/trace`}
+          className="underline underline-offset-2"
+        >
+          what the pipeline did
+        </Link>
+        .
       </p>
     </div>
   );

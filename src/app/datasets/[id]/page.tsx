@@ -10,9 +10,15 @@ export default async function DatasetPage({
 
   return (
     <main className="mx-auto w-full max-w-7xl flex-1 p-6">
-      <p className="text-muted-foreground mb-4 text-xs">
+      <p className="text-muted-foreground mb-4 flex gap-3 text-xs">
         <Link href="/" className="underline underline-offset-2">
           Home
+        </Link>
+        <Link
+          href={`/datasets/${id}/trace`}
+          className="underline underline-offset-2"
+        >
+          What the pipeline did
         </Link>
       </p>
       <DatasetView datasetId={id} />
