@@ -95,15 +95,30 @@ export function digitsOf(value: string): string {
  * thousands separators, European decimal commas, currency prefixes.
  * Returns null when nothing numeric can be recovered.
  */
+/**
+ * Currency codes are matched against a list rather than "any three letters".
+ * The general rule was silently destructive: `SKU-1000` had its prefix eaten and
+ * came back as the number -1000, so an entirely consistent identifier column was
+ * inferred as numeric and then reported as a type mismatch on every single row.
+ *
+ * A code outside this list simply is not stripped, so the value fails to parse
+ * and surfaces to a human — the safe direction to be wrong in.
+ */
+const CURRENCY_CODES =
+  /^(USD|EUR|GBP|CAD|AUD|NZD|CHF|JPY|CNY|INR|MXN|BRL|ARS|CLP|COP|PEN|UYU|SEK|NOK|DKK|PLN|CZK|ZAR|KRW|SGD|HKD)\s*/i;
+
+function stripCurrency(value: string): string {
+  return value
+    .replace(CURRENCY_CODES, "")
+    .replace(/[$€£¥]/g, "")
+    .replace(/\s/g, "");
+}
+
 export function parseNumber(value: string): number | null {
   const trimmed = value.trim();
   if (trimmed === "") return null;
 
-  // Strip currency symbols and codes, keeping sign, digits and separators.
-  const stripped = trimmed
-    .replace(/^[A-Z]{3}\s*/i, "")
-    .replace(/[$€£¥]/g, "")
-    .replace(/\s/g, "");
+  const stripped = stripCurrency(trimmed);
 
   if (!/^[+-]?[\d.,]+$/.test(stripped)) return null;
 
@@ -141,11 +156,7 @@ export function isCanonicalNumber(value: string): boolean {
 export function canonicalNumberString(value: string): string | null {
   if (parseNumber(value) === null) return null;
 
-  const stripped = value
-    .trim()
-    .replace(/^[A-Z]{3}\s*/i, "")
-    .replace(/[$€£¥]/g, "")
-    .replace(/\s/g, "");
+  const stripped = stripCurrency(value.trim());
 
   const lastComma = stripped.lastIndexOf(",");
   const lastDot = stripped.lastIndexOf(".");

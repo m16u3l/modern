@@ -65,6 +65,15 @@ describe("parseNumber", () => {
     expect(parseNumber("")).toBeNull();
     expect(parseNumber("N/A")).toBeNull();
   });
+
+  it("does not mistake an identifier prefix for a currency code", () => {
+    // "SKU-1000" used to come back as -1000, which inferred an entire
+    // identifier column as numeric and then flagged every row in it.
+    expect(parseNumber("SKU-1000")).toBeNull();
+    expect(parseNumber("INV-2025-04")).toBeNull();
+    expect(parseNumber("REF 4120")).toBeNull();
+    expect(canonicalNumberString("SKU-1000")).toBeNull();
+  });
 });
 
 describe("canonicalNumberString", () => {
