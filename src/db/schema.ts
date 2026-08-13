@@ -55,7 +55,14 @@ export const rows = pgTable(
       .references(() => datasets.id, { onDelete: "cascade" }),
     rowIndex: integer("row_index").notNull(),
     data: jsonb("data").$type<Record<string, string>>().notNull(),
+    /** Set once an accepted suggestion has rewritten a cell in this row. */
     dirty: boolean("dirty").notNull().default(false),
+    /**
+     * Soft delete. A hard delete would strand the issues and audit entries that
+     * reference this row, and would make the decision unreviewable afterwards.
+     * Export simply filters these out.
+     */
+    deleted: boolean("deleted").notNull().default(false),
   },
   (table) => [
     uniqueIndex("rows_dataset_row_idx").on(table.datasetId, table.rowIndex),
