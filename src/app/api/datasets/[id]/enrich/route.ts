@@ -1,7 +1,15 @@
 import { eq, inArray } from "drizzle-orm";
 import { getDb, schema } from "@/db";
 import { groupKeyFor } from "@/lib/contracts";
-import { BATCH_SIZE, getLlm, renderColumnContext, type CandidateIssue } from "@/lib/llm";
+import {
+  BATCH_SIZE,
+  UNANSWERED_CONFIDENCE,
+  getLlm,
+  renderColumnContext,
+  reviewWithFallback,
+  unansweredCandidates,
+  type CandidateIssue,
+} from "@/lib/llm";
 import {
   countAmbiguousIssues,
   getDataset,
@@ -63,7 +71,11 @@ export async function POST(
   const llm = getLlm();
 
   try {
-    const { verdicts, usage } = await llm.reviewCandidates({
+    const {
+      review: { verdicts, usage },
+      provider,
+      degradedFrom,
+    } = await reviewWithFallback(llm, {
       columnContext: renderColumnContext(dataset.columns, dataset.rowCount),
       candidates: candidates.filter((candidate) => candidate.rows.length > 0),
     });
@@ -93,9 +105,36 @@ export async function POST(
       ];
     });
 
+    // A model answers what it wants to. Anything it left out still gets a card,
+    // flagged for a human — a detected problem must never disappear just because
+    // the model declined to have an opinion about it.
+    const declined = unansweredCandidates(
+      candidates.filter((candidate) => candidate.rows.length > 0),
+      verdicts,
+    ).flatMap((candidate) => {
+      const issue = byIssue.get(candidate.id);
+      if (!issue) return [];
+
+      return [
+        {
+          issueId: issue.id,
+          datasetId: id,
+          action: "no_action" as const,
+          rowId: candidate.rows[0].id,
+          columnKey: issue.columnKey,
+          currentValue: candidate.currentValue,
+          proposedValue: null,
+          confidence: UNANSWERED_CONFIDENCE,
+          rationale: `${issue.evidence} The model returned no verdict for this one, so it needs a human.`,
+          source: "llm" as const,
+          groupKey: groupKeyFor(issue.type, issue.columnKey ?? undefined),
+        },
+      ];
+    });
+
     await db.transaction(async (tx) => {
-      if (suggestions.length > 0) {
-        await tx.insert(schema.suggestions).values(suggestions);
+      if (suggestions.length + declined.length > 0) {
+        await tx.insert(schema.suggestions).values([...suggestions, ...declined]);
       }
       // Cleared whether or not a verdict came back, so a model that skips a
       // candidate cannot put this loop into an infinite cycle.
@@ -110,7 +149,10 @@ export async function POST(
         );
     });
 
-    await recordUsage(id, llm.id, llm.model, usage);
+    // Recorded against whoever actually answered, never the provider that was
+    // asked. A degraded batch spends no tokens, so `recordUsage` writes nothing
+    // and the cost report stays honest by omission.
+    await recordUsage(id, provider.id, provider.model, usage);
 
     const remaining = await countAmbiguousIssues(id);
     const processed = dataset.enrichCursor + pending.length;
@@ -127,9 +169,11 @@ export async function POST(
       done: remaining === 0,
       remaining,
       processed,
-      suggestionsAdded: suggestions.length,
-      provider: llm.id,
-      model: llm.model,
+      suggestionsAdded: suggestions.length + declined.length,
+      unanswered: declined.length,
+      provider: provider.id,
+      model: provider.model,
+      degradedFrom,
       progress: processed / (processed + remaining),
     });
   } catch (error) {

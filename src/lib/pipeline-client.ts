@@ -81,11 +81,16 @@ export async function runPipeline(
   if (status !== "ready") {
     for (let i = 0; i < MAX_ITERATIONS; i++) {
       const result = await postJson(`/api/datasets/${id}/enrich`);
+      const degraded = result.degradedFrom as
+        | { provider: string; reason: string }
+        | undefined;
+
       onProgress({
         stage: "enriching",
         progress: Number(result.progress ?? 1),
-        detail:
-          Number(result.remaining ?? 0) > 0
+        detail: degraded
+          ? `${degraded.provider} is unavailable — finishing on the built-in rules stub`
+          : Number(result.remaining ?? 0) > 0
             ? `${result.remaining} ambiguous issues left for ${result.provider ?? "the model"}`
             : "Enrichment complete",
       });

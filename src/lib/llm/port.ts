@@ -180,6 +180,24 @@ export function sanitizeVerdicts(
   return clean;
 }
 
+/**
+ * Candidates the model was asked about and did not answer — either it skipped
+ * them or its verdict was thrown out by the sanitiser above. They matter because
+ * the issue is cleared from the ambiguous queue whether or not a verdict came
+ * back, so anything unanswered here would otherwise leave the pipeline without
+ * ever reaching a reviewer.
+ */
+export function unansweredCandidates(
+  candidates: CandidateIssue[],
+  verdicts: LlmVerdict[],
+): CandidateIssue[] {
+  const answered = new Set(verdicts.map((verdict) => verdict.candidateId));
+  return candidates.filter((candidate) => !answered.has(candidate.id));
+}
+
+/** Low enough to sit under the bulk-accept gate: these need a human by definition. */
+export const UNANSWERED_CONFIDENCE = 0.3;
+
 export function chunk<T>(items: T[], size: number): T[][] {
   const batches: T[][] = [];
   for (let i = 0; i < items.length; i += size) {

@@ -1,7 +1,7 @@
 import { AnthropicLlm, DEFAULT_ANTHROPIC_MODEL } from "./anthropic";
 import { FakeLlm } from "./fake";
 import { OpenAiCompatibleLlm } from "./openai-compatible";
-import type { LlmPort } from "./port";
+import type { LlmPort, ReviewInput, ReviewOutput } from "./port";
 
 export * from "./port";
 export { AnthropicLlm } from "./anthropic";
@@ -55,4 +55,42 @@ export function getLlm(env: LlmEnv = process.env): LlmPort {
 /** True when the configured provider is a real model rather than the stub. */
 export function isLiveProvider(env: LlmEnv = process.env): boolean {
   return getLlm(env).id !== "fake";
+}
+
+export type ReviewAttempt = {
+  review: ReviewOutput;
+  /** The provider that actually answered, which is what usage is recorded against. */
+  provider: LlmPort;
+  /** Set only when the configured provider failed and the stub took over. */
+  degradedFrom?: { provider: string; reason: string };
+};
+
+/**
+ * A provider that is configured and then fails — rate limit, expired credit,
+ * a bad gateway — must not strand the run: the batch falls through to the
+ * deterministic stub and the pipeline still finishes. Missing credentials
+ * already degrade at `getLlm`; this is the same promise kept at call time.
+ *
+ * If the stub itself is the one that failed there is nothing left to fall back
+ * to, so the error propagates.
+ */
+export async function reviewWithFallback(
+  primary: LlmPort,
+  input: ReviewInput,
+  fallback: LlmPort = new FakeLlm(),
+): Promise<ReviewAttempt> {
+  try {
+    return { review: await primary.reviewCandidates(input), provider: primary };
+  } catch (error) {
+    if (primary.id === fallback.id) throw error;
+
+    return {
+      review: await fallback.reviewCandidates(input),
+      provider: fallback,
+      degradedFrom: {
+        provider: primary.id,
+        reason: error instanceof Error ? error.message : "the model call failed",
+      },
+    };
+  }
 }

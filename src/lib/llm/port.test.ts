@@ -5,7 +5,9 @@ import {
   chunk,
   getLlm,
   renderColumnContext,
+  reviewWithFallback,
   sanitizeVerdicts,
+  unansweredCandidates,
   withRetry,
   FakeLlm,
   AnthropicLlm,
@@ -137,6 +139,83 @@ describe("getLlm", () => {
 
     expect(llm.id).toBe("openai-compatible");
     expect(llm.model).toBe("llama-3.3-70b-versatile");
+  });
+});
+
+describe("unansweredCandidates", () => {
+  const verdictFor = (candidateId: string, rowId: string) => ({
+    candidateId,
+    rowId,
+    action: "no_action" as const,
+    proposedValue: null,
+    confidence: 0.5,
+    rationale: "…",
+  });
+
+  it("is empty when the model answered everything", () => {
+    const verdicts = CANDIDATES.map((candidate) =>
+      verdictFor(candidate.id, candidate.rows[0].id),
+    );
+
+    expect(unansweredCandidates(CANDIDATES, verdicts)).toEqual([]);
+  });
+
+  it("reports the candidates a model skipped", () => {
+    const answered = [verdictFor("cand-2", FIXTURE_ROWS[16].id)];
+
+    expect(unansweredCandidates(CANDIDATES, answered).map((c) => c.id)).toEqual([
+      "cand-1",
+      "cand-3",
+    ]);
+  });
+
+  it("reports candidates whose verdict the sanitiser threw out", () => {
+    // A hallucinated row id never survives sanitizeVerdicts, so the candidate is
+    // unanswered even though the model did say something about it.
+    const hallucinated = sanitizeVerdicts(
+      { verdicts: [{ ...verdictFor("cand-3", "row-that-does-not-exist"), action: "set_value", proposedValue: "x" }] },
+      CANDIDATES,
+    );
+
+    expect(hallucinated).toEqual([]);
+    expect(unansweredCandidates(CANDIDATES, hallucinated).map((c) => c.id)).toContain(
+      "cand-3",
+    );
+  });
+});
+
+describe("reviewWithFallback", () => {
+  /** A provider that is configured and reachable, then isn't. */
+  const failing = (message: string): LlmPort => ({
+    id: "openai-compatible",
+    model: "llama-3.3-70b-versatile",
+    reviewCandidates: async () => {
+      throw new Error(message);
+    },
+  });
+
+  it("uses the configured provider when it answers", async () => {
+    const attempt = await reviewWithFallback(new FakeLlm(), INPUT);
+
+    expect(attempt.provider.id).toBe("fake");
+    expect(attempt.degradedFrom).toBeUndefined();
+  });
+
+  it("finishes the batch on the stub when the provider fails", async () => {
+    const attempt = await reviewWithFallback(failing("429 rate limit"), INPUT);
+
+    expect(attempt.provider.id).toBe("fake");
+    expect(attempt.review.verdicts.length).toBeGreaterThan(0);
+    expect(attempt.degradedFrom).toEqual({
+      provider: "openai-compatible",
+      reason: "429 rate limit",
+    });
+  });
+
+  it("propagates when the stub itself is what failed", async () => {
+    const broken = { ...failing("boom"), id: "fake" };
+
+    await expect(reviewWithFallback(broken, INPUT)).rejects.toThrow("boom");
   });
 });
 
