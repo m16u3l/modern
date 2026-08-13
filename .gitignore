@@ -37,6 +37,10 @@ yarn-error.log*
 # vercel
 .vercel
 
+# working notes — kept on disk, deliberately not part of the deliverable
+PROGRESS.md
+VIDEO-SCRIPT.md
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts

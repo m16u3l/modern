@@ -5,7 +5,7 @@ its own; only the genuinely ambiguous cases reach an LLM. You review every
 proposed fix — grouped by pattern, not one row at a time — then export a clean
 file and a full audit log.
 
-**Live:** https://ai-data-cleanup-i8wnly34b-m16u3ls-projects.vercel.app
+**Live:** https://ai-data-cleanup.vercel.app
 **Demo data:** click *Load demo data* on the home page, or grab
 [`demo/messy-customers.csv`](demo/messy-customers.csv).
 
@@ -26,9 +26,9 @@ npm run dev
 | Variable | Needed for |
 |---|---|
 | `DATABASE_URL` | Supabase **transaction pooler**, port 6543. Used at runtime. |
-| `DIRECT_URL` | Supabase **direct connection**, port 5432. Used by drizzle-kit only. |
+| `DIRECT_URL` | Supabase **session pooler**, port 5432. Used by drizzle-kit only. Not the `db.<ref>.supabase.co` direct host — that is IPv6-only on the free tier and will not resolve from most machines. |
 | `BLOB_READ_WRITE_TOKEN` | Vercel Blob. `vercel env pull` writes it for you. |
-| `ANTHROPIC_API_KEY` | Optional. Without it the app falls back to a deterministic stub and still runs end to end. |
+| `ANTHROPIC_API_KEY` | Optional. Without it — or if the provider errors mid-run — the app falls back to a deterministic stub and still runs end to end. |
 
 `npm test` needs none of them.
 
@@ -40,9 +40,15 @@ OpenAI-compatible provider works by changing two variables:
 ```bash
 LLM_PROVIDER=openai-compatible
 OPENAI_COMPATIBLE_BASE_URL=https://api.groq.com/openai/v1   # or Gemini, OpenRouter, Ollama
-OPENAI_COMPATIBLE_MODEL=llama-3.3-70b-versatile
+OPENAI_COMPATIBLE_MODEL=openai/gpt-oss-120b
 OPENAI_COMPATIBLE_API_KEY=...
 ```
+
+**The deployed demo runs on exactly this** — Groq's free tier, `gpt-oss-120b`.
+Model choice matters more than the plumbing: on the same batch,
+`llama-3.3-70b-versatile` returned `no_action` at 0.5 confidence for every fuzzy
+duplicate, while `gpt-oss-120b` resolved all of them at 0.95 with a specific
+reason each. Both took ~19 seconds for the full run.
 
 `.env.example` lists the base URLs for Groq, Google Gemini's compatibility
 endpoint, OpenRouter and a local Ollama.
@@ -76,6 +82,17 @@ The engine in `src/lib/profiling/` imports nothing from Next, Drizzle or
 Anthropic. Rows in, findings out. Everything that knows about a database lives
 in `src/lib/persistence.ts` and the route handlers.
 
+### Seeing what actually happened
+
+`/datasets/<id>/trace` renders the whole run from the tables that recorded it:
+each stage with its cursor, every model call with its token count, and one row
+per finding showing what was detected, what was proposed, by a rule or by the
+model, and what a human decided. A finding with no proposal, or a proposal with
+no decision, shows as a gap rather than quietly vanishing.
+
+It is server-rendered with no client state, deliberately: it is a window onto the
+database, and giving it its own copy of the truth would only let the two disagree.
+
 ---
 
 ## Decisions and trade-offs
@@ -104,11 +121,12 @@ and the engine routes precisely those cases and nothing else.
 This was the highest-leverage decision in the build. The demo dataset produces
 53 suggestions; a real one produces thousands. Nobody audits 400 cards.
 
-So suggestions collapse into ~13 groups keyed on issue type plus column —
-*"Inconsistent format · column phone — 5 suggestions"* — with bulk accept and
-reject per group, expandable to the individual diffs. A reviewer audits a
-handful of patterns and spot-checks inside each. That is how the job actually
-gets done.
+So suggestions collapse into groups keyed on issue type plus column —
+*"Inconsistent format · column phone — 6 suggestions"* — with bulk accept and
+reject per group, expandable to the individual diffs. On the demo dataset the 53
+findings become 18 groups, and the largest eight cover about 70% of them: most of
+the file is cleaned in eight or so decisions. A reviewer audits a handful of
+patterns and spot-checks inside each. That is how the job actually gets done.
 
 Two details that follow from taking that seriously:
 
@@ -197,6 +215,12 @@ warranted.
   scope for a one-day build and it would be the first thing to add.
 - **`merge_rows` is in the contract but never produced.** Duplicate resolution
   currently deletes rather than merges.
+- **A failing provider degrades, it does not fail loudly enough.** A provider that
+  errors mid-run — rate limit, expired credit — drops that batch to the
+  deterministic stub so the run still finishes, and says so in the progress line.
+  But the audit export only records tokens actually spent, so nothing in the
+  exported file marks *which* findings came from the stub instead of the model.
+  Stamping the provider onto each suggestion is the fix.
 - **No E2E tests.** The review workspace has component tests covering the
   keyboard flow, bulk accept and undo; the pipeline is covered at the unit
   level. A browser test would be the next thing worth adding.
@@ -206,7 +230,7 @@ warranted.
 ## Tests
 
 ```bash
-npm test        # 132 tests
+npm test        # 139 tests
 npm run lint
 npm run typecheck
 ```
@@ -219,6 +243,12 @@ The sanitiser tests are worth a look: everything a model returns is dropped if
 it names a row or candidate that was not sent, confidence is clamped, and a
 proposal with nothing to propose is demoted. A hallucination should never reach
 the review UI, let alone the database.
+
+The mirror of that: a model does not have to answer. When it skips a candidate —
+or when the sanitiser throws its verdict out — the finding still becomes a card,
+at low confidence, saying the model declined. Detected problems get resolved by a
+rule, by a model, or by a human, but they never quietly disappear. The counts in
+the health bar and the review queue always agree.
 
 ---
 
