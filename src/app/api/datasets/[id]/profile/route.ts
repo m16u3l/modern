@@ -46,7 +46,7 @@ export async function POST(
   let columns = dataset.columns;
   if (cursor === 0 || columns.length === 0) {
     const sample = await loadRows(id, { offset: 0, limit: CHUNK_SIZE });
-    columns = computeColumnStats(sample, Object.keys(sample[0].data));
+    columns = computeColumnStats(sample, dataset.headers);
 
     // nullCount from the sample would understate a large file; scale it later
     // during the final pass, where the whole dataset is already in memory.
@@ -66,10 +66,9 @@ export async function POST(
     // Cross-row pass. At the 5k cap this is one query and one in-memory scan;
     // past that it is the first thing that would move to a queued worker.
     const allRows = await loadRows(id);
-    const headers = Object.keys(allRows[0].data);
-    await persistFindings(id, detectCrossRow(allRows, headers));
+    await persistFindings(id, detectCrossRow(allRows, dataset.headers));
 
-    const exactColumns = computeColumnStats(allRows, headers);
+    const exactColumns = computeColumnStats(allRows, dataset.headers);
     await db
       .update(schema.datasets)
       .set({

@@ -36,7 +36,11 @@ export async function GET(
     );
   }
 
-  const headers = dataset.columns.map((column) => column.key);
+  // From the stored order, never from jsonb keys — Postgres reorders those.
+  const headers =
+    dataset.headers.length > 0
+      ? dataset.headers
+      : dataset.columns.map((column) => column.key);
   if (headers.length === 0) {
     return Response.json({ error: "Dataset has not been profiled" }, { status: 409 });
   }

@@ -32,6 +32,12 @@ export const datasets = pgTable("datasets", {
   filename: text("filename").notNull(),
   blobUrl: text("blob_url"),
   rowCount: integer("row_count").notNull().default(0),
+  /**
+   * Column order as it appeared in the uploaded file. Postgres does not
+   * preserve key order inside jsonb, so `Object.keys(row.data)` comes back
+   * reordered — which would silently scramble the exported CSV.
+   */
+  headers: text("headers").array().notNull().default([]),
   // Column statistics are computed once from a sample and reused by every
   // chunk, so they have to survive between invocations.
   columns: jsonb("columns").$type<ColumnStats[]>().notNull().default([]),

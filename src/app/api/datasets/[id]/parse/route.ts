@@ -60,6 +60,7 @@ export async function POST(
       .update(schema.datasets)
       .set({
         rowCount: rows.length,
+        headers,
         status: "profiling",
         progress: 0,
         profileCursor: 0,

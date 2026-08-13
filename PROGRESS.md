@@ -42,12 +42,12 @@ Anthropic SDK 0.116 / OpenAI SDK 7.4 · Zod 4 · PapaParse
 
 | Phase | State | Notes |
 |---|---|---|
-| A — Deployed skeleton | **Blocked** | Vercel project + Blob store done, deploy is Ready. Schema written but **not migrated** — needs Supabase credentials. See the two blockers below. |
+| A — Deployed skeleton | Done locally | Vercel project + Blob store done, deploy is Ready, six tables migrated, `/api/health` returns `db: "connected"`. Production still needs env vars — see blockers. |
 | B — Contracts + fixtures | Done | `src/lib/contracts.ts`, `src/lib/fixtures.ts` |
 | C — Review workspace | Done | `src/components/workspace/**`, works against fixtures at `/review` |
 | D — Rules engine + LLM port | Done | `src/lib/profiling/**`, `src/lib/llm/**`. Real providers unverified (no key yet). |
-| E — Ingest + chunked pipeline | **Written, unverified** | All routes exist, typecheck and build. Nothing has ever run against a real database. |
-| F — Apply / export / audit | **Written, unverified** | `apply` (one transaction), streamed CSV export, audit JSON export. Pure planner is unit-tested. |
+| E — Ingest + chunked pipeline | **Verified locally** | Full run against Postgres: demo → blob → parse → profile → enrich → workspace. 53 issues, 35 by rules, 18 by the model. |
+| F — Apply / export / audit | **Verified locally** | Applied 53 decisions: 31 cells rewritten, 8 rows deleted. Audit log cross-checked against the exported CSV — 0 mismatches. |
 | G — Tests, CI, demo CSV, README | Done | CI workflow, `demo/messy-customers.csv` (generated from fixtures), full README with the trade-offs section. |
 | Video | Not started | |
 
@@ -72,42 +72,30 @@ Vercel Authentication set to `Disabled`, or `Only Preview Deployments` (which
 leaves production open and still protects previews). This is a change to the
 user's project settings, so it needs their say-so.
 
-### 2. The Supabase database password
+### 2. Production has no database credentials
 
-Everything in phases E and F writes to Postgres and has never executed.
+`.env.local` is set up and the six tables are migrated, so **everything works
+locally**. Vercel does not have `DATABASE_URL` / `DIRECT_URL` yet, so the
+deployed app cannot reach Postgres. See "Exact commands for step 5".
 
-Needed in `.env.local`:
-
-```
-DATABASE_URL=   # transaction pooler, port 6543 — used at runtime
-DIRECT_URL=     # direct connection, port 5432 — used by drizzle-kit only
-```
-
-Project ref is `fapojysgmrjkfcycjyxt`. The Supabase MCP server is configured in
-`.mcp.json` and can apply DDL, but it cannot supply a connection string to the
-running app — that still needs the password.
-
-Optional, to exercise the real model path:
-
-```
-ANTHROPIC_API_KEY=
-```
-
-Without it the pipeline falls back to `FakeLlm` and still completes end to end.
+Not a blocker, but worth doing: `ANTHROPIC_API_KEY` is unset, so enrichment runs
+on `FakeLlm`. The pipeline completes either way — that fallback is deliberate —
+but the real adapter's structured outputs and prompt caching are still
+unexercised against the live API.
 
 ---
 
 ## Next steps, in order
 
-1. Put `DATABASE_URL` / `DIRECT_URL` in `.env.local`.
-2. `npm run db:push` to create the six tables.
-3. `npm run dev`, click **Load demo data**, watch parse → profile → enrich → workspace,
-   then apply and download both exports. This is the first real exercise of phases E and F.
-4. Verify `/api/health` returns `{ ok: true, db: "connected" }`.
-5. Push env vars to Vercel (`vercel env add DATABASE_URL production`, etc.), redeploy.
-6. Turn off Deployment Protection and re-check every route returns 200.
-7. Record the 5-minute video. Practise the 3:00–4:15 architecture segment first.
-8. Record a GIF for the README (there is a placeholder-free spot right under the title).
+Local setup and the full pipeline are done and verified. What is left:
+
+1. Push env vars to Vercel (see the commands below), then `vercel --prod`.
+2. Turn off Deployment Protection and re-check every route returns 200.
+3. Re-run the demo flow against the production URL, not just localhost.
+4. Optional: set `ANTHROPIC_API_KEY` so enrichment exercises the real adapter
+   instead of `FakeLlm`.
+5. Record the 5-minute video. Practise the 3:00–4:15 architecture segment first.
+6. Record a GIF for the README (there is a spot for it right under the title).
 
 Optional if time allows: fill in the README's live URL if it changes, and delete
 this file before submitting.
@@ -170,6 +158,11 @@ README decisions section, the video.
   materialised keys. Fine at the 5k demo cap; it is the first thing that would move
   to a queued worker at 1M rows. This is the README's "what I'd do differently".
 - **`prepare: false` is mandatory** with Supabase's transaction pooler (`src/db/index.ts`).
+- **Never derive column order from `Object.keys(row.data)`.** Postgres does not
+  preserve key order inside jsonb, so it comes back reordered and the exported CSV
+  silently ships scrambled columns. The order is stored on `datasets.headers` at
+  parse time and read from there. This one only showed up by running the export
+  and eyeballing it — no type or test caught it.
 - **`maxDuration` is exported per route file** — route handlers do not inherit it
   from a layout, so `vercel.json` alone would not work.
 - **The rules engine imports nothing from Next, Drizzle or Anthropic.** Keep it that way;
