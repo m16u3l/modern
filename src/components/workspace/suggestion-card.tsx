@@ -32,6 +32,7 @@ export function SuggestionCard({
   suggestion,
   issue,
   row,
+  columnOrder,
   status,
   finalValue,
   focused,
@@ -46,6 +47,7 @@ export function SuggestionCard({
   suggestion: Suggestion;
   issue?: Issue;
   row?: DataRow;
+  columnOrder: string[];
   status: ReviewStatus;
   finalValue: string | null;
   focused: boolean;
@@ -138,7 +140,13 @@ export function SuggestionCard({
         </p>
       )}
 
-      {row && <RowContext row={row} highlight={suggestion.columnKey} />}
+      {row && (
+        <RowContext
+          row={row}
+          columnOrder={columnOrder}
+          highlight={suggestion.columnKey}
+        />
+      )}
 
       <div className="mt-3 flex gap-2">
         <Button
@@ -226,10 +234,21 @@ function InlineEditor({
 }
 
 /** The rest of the row, so a reviewer can tell who this record actually is. */
-function RowContext({ row, highlight }: { row: DataRow; highlight?: string }) {
+function RowContext({
+  row,
+  columnOrder,
+  highlight,
+}: {
+  row: DataRow;
+  columnOrder: string[];
+  highlight?: string;
+}) {
   return (
     <dl className="mt-3 flex flex-wrap gap-x-4 gap-y-1 border-t pt-3 text-xs">
-      {Object.entries(row.data).map(([key, value]) => (
+      {/* Driven by the dataset's column order, never by the row's own keys:
+          those come back from jsonb reordered, which would show the reviewer a
+          record whose fields are scrambled. */}
+      {columnOrder.map((key) => (
         <div key={key} className="flex gap-1">
           <dt
             className={cn(
@@ -245,7 +264,7 @@ function RowContext({ row, highlight }: { row: DataRow; highlight?: string }) {
               key === highlight ? "text-foreground font-medium" : "text-muted-foreground",
             )}
           >
-            {value === "" ? "—" : value}
+            {row.data[key] ? row.data[key] : "—"}
           </dd>
         </div>
       ))}

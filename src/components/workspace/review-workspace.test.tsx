@@ -164,6 +164,34 @@ describe("ReviewWorkspace", () => {
     expect(screen.getByTitle("manual value")).toBeInTheDocument();
   });
 
+  it("shows the row's fields in the dataset's column order, not the row's own", () => {
+    // Rows come back from jsonb with their keys reordered, so the record has to
+    // be laid out from the dataset's columns or the reviewer reads a scrambled
+    // version of it.
+    const scrambled = FIXTURE_ROWS.map((row) => ({
+      ...row,
+      data: Object.fromEntries(
+        Object.entries(row.data).sort(([a], [b]) => a.localeCompare(b)),
+      ),
+    }));
+
+    render(
+      <ReviewWorkspace
+        summary={FIXTURE_SUMMARY}
+        rows={scrambled}
+        issues={FIXTURE_ISSUES}
+        suggestions={FIXTURE_SUGGESTIONS}
+      />,
+    );
+
+    const card = screen.getAllByTestId("suggestion-card")[0];
+    const labels = within(card)
+      .getAllByRole("term")
+      .map((term) => term.textContent);
+
+    expect(labels).toEqual(FIXTURE_SUMMARY.columns.map((column) => column.key));
+  });
+
   it("reaches zero pending and offers to apply", async () => {
     const user = userEvent.setup();
     render(

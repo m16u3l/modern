@@ -54,6 +54,10 @@ export function ReviewWorkspace({
     () => new Map(issues.map((issue) => [issue.id, issue])),
     [issues],
   );
+  const columnOrder = useMemo(
+    () => summary.columns.map((column) => column.key),
+    [summary.columns],
+  );
 
   // Group severity comes from the issues, so the sidebar can rank patterns.
   const severityByGroup = useMemo(() => {
@@ -318,6 +322,7 @@ export function ReviewWorkspace({
                       suggestion={suggestion}
                       issue={issuesById.get(suggestion.issueId)}
                       row={rowsById.get(suggestion.rowId)}
+                      columnOrder={columnOrder}
                       status={statusOf(state, suggestion.id)}
                       finalValue={
                         state.decisions[suggestion.id]?.finalValue ??
