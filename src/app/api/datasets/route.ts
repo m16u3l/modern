@@ -1,6 +1,6 @@
 import { z } from "zod";
-import { desc } from "drizzle-orm";
 import { getDb, schema } from "@/db";
+import { listDatasets } from "@/lib/persistence";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -37,17 +37,5 @@ export async function POST(request: Request) {
 }
 
 export async function GET() {
-  const datasets = await getDb()
-    .select({
-      id: schema.datasets.id,
-      filename: schema.datasets.filename,
-      rowCount: schema.datasets.rowCount,
-      status: schema.datasets.status,
-      createdAt: schema.datasets.createdAt,
-    })
-    .from(schema.datasets)
-    .orderBy(desc(schema.datasets.createdAt))
-    .limit(25);
-
-  return Response.json({ datasets });
+  return Response.json({ datasets: await listDatasets() });
 }

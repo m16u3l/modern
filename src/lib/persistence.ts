@@ -1,8 +1,9 @@
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { getDb, schema } from "@/db";
 import {
   groupKeyFor,
   type DataRow,
+  type DatasetStatus,
   type DatasetSummary,
   type Issue,
   type IssueType,
@@ -228,6 +229,61 @@ export async function buildSummary(
     status: dataset.status,
     progress: dataset.progress,
   };
+}
+
+export type DatasetListEntry = {
+  id: string;
+  filename: string;
+  rowCount: number;
+  status: DatasetStatus;
+  createdAt: Date;
+  /** Total suggestions raised, and how many still have no human decision. */
+  suggestionCount: number;
+  pendingCount: number;
+};
+
+/**
+ * The upload history. Counts are aggregated in two grouped queries rather than
+ * one per dataset — the list is the one place tempted into a query per row.
+ *
+ * Not scoped to a viewer, because the app has no concept of one: every upload on
+ * a deployment is visible to everyone who opens it.
+ */
+export async function listDatasets(limit = 25): Promise<DatasetListEntry[]> {
+  const db = getDb();
+
+  const datasets = await db
+    .select({
+      id: schema.datasets.id,
+      filename: schema.datasets.filename,
+      rowCount: schema.datasets.rowCount,
+      status: schema.datasets.status,
+      createdAt: schema.datasets.createdAt,
+    })
+    .from(schema.datasets)
+    .orderBy(desc(schema.datasets.createdAt))
+    .limit(limit);
+
+  if (datasets.length === 0) return [];
+
+  const ids = datasets.map((dataset) => dataset.id);
+  const counts = await db
+    .select({
+      datasetId: schema.suggestions.datasetId,
+      total: sql<number>`count(*)::int`,
+      pending: sql<number>`count(*) filter (where ${schema.suggestions.status} = 'pending')::int`,
+    })
+    .from(schema.suggestions)
+    .where(inArray(schema.suggestions.datasetId, ids))
+    .groupBy(schema.suggestions.datasetId);
+
+  const byDataset = new Map(counts.map((row) => [row.datasetId, row]));
+
+  return datasets.map((dataset) => ({
+    ...dataset,
+    suggestionCount: byDataset.get(dataset.id)?.total ?? 0,
+    pendingCount: byDataset.get(dataset.id)?.pending ?? 0,
+  }));
 }
 
 export type TraceEntry = {

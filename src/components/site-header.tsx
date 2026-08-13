@@ -23,12 +23,20 @@ export function SiteHeader() {
           AI Data Cleanup
         </Link>
 
-        <Link
-          href="/review"
-          className="text-muted-foreground hover:text-foreground ml-auto rounded-md text-sm transition-colors focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
-        >
-          Fixture workspace
-        </Link>
+        <nav className="ml-auto flex items-center gap-4 text-sm sm:gap-5">
+          <Link
+            href="/datasets"
+            className="text-muted-foreground hover:text-foreground rounded-md transition-colors focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
+          >
+            History
+          </Link>
+          <Link
+            href="/review"
+            className="text-muted-foreground hover:text-foreground hidden rounded-md transition-colors focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none sm:inline"
+          >
+            Fixture workspace
+          </Link>
+        </nav>
       </div>
     </header>
   );
