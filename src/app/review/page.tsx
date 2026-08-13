@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { ReviewWorkspace } from "@/components/workspace/review-workspace";
 import {
   FIXTURE_ISSUES,
@@ -13,12 +12,9 @@ import {
  */
 export default function ReviewFixturesPage() {
   return (
-    <main className="mx-auto w-full max-w-7xl flex-1 p-6">
-      <p className="text-muted-foreground mb-4 text-xs">
-        <Link href="/" className="underline underline-offset-2">
-          Home
-        </Link>{" "}
-        · fixture data, no backend
+    <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-6 sm:px-6">
+      <p className="text-muted-foreground mb-4 text-sm">
+        Fixture data — no backend, nothing is saved.
       </p>
       <ReviewWorkspace
         summary={FIXTURE_SUMMARY}

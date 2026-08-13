@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { ArrowLeft } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import {
   Table,
@@ -17,6 +18,13 @@ import {
 } from "@/lib/persistence";
 
 export const dynamic = "force-dynamic";
+
+/**
+ * The whole page is one server render, so the table is bounded. A 5k-row file
+ * can produce thousands of findings, and shipping all of them would mean
+ * megabytes of HTML for a page nobody scrolls to the end of.
+ */
+const TABLE_LIMIT = 250;
 
 /**
  * Everything the pipeline did to one dataset, read straight from the tables that
@@ -45,18 +53,19 @@ export default async function TracePage({
   );
 
   return (
-    <main className="mx-auto w-full max-w-7xl flex-1 p-6">
-      <p className="text-muted-foreground mb-4 flex gap-3 text-xs">
-        <Link href="/" className="underline underline-offset-2">
-          Home
-        </Link>
-        <Link href={`/datasets/${id}`} className="underline underline-offset-2">
+    <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-6 sm:px-6">
+      <p className="mb-4 flex justify-end">
+        <Link
+          href={`/datasets/${id}`}
+          className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1 rounded-md text-sm transition-colors focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
+        >
+          <ArrowLeft className="size-4" aria-hidden />
           Review workspace
         </Link>
       </p>
 
-      <h1 className="text-lg font-semibold">{dataset.filename}</h1>
-      <p className="text-muted-foreground mt-1 text-sm">
+      <h1 className="font-mono text-xl font-medium">{dataset.filename}</h1>
+      <p className="text-muted-foreground mt-1.5 text-base text-pretty">
         Everything this dataset went through, as recorded. Uploaded{" "}
         {dataset.createdAt.toISOString().replace("T", " ").slice(0, 19)} UTC.
       </p>
@@ -78,7 +87,7 @@ export default async function TracePage({
       </section>
 
       <section className="mt-8">
-        <h2 className="text-sm font-medium">Pipeline</h2>
+        <h2 className="text-lg font-medium">Pipeline</h2>
         <div className="mt-3 grid gap-3 lg:grid-cols-4">
           <Stage
             name="1 · Parse"
@@ -117,7 +126,7 @@ export default async function TracePage({
 
       {usage.length > 0 && (
         <section className="mt-8">
-          <h2 className="text-sm font-medium">Model calls</h2>
+          <h2 className="text-lg font-medium">Model calls</h2>
           <div className="mt-3 overflow-x-auto rounded-lg border">
             <Table>
               <TableHeader>
@@ -156,13 +165,19 @@ export default async function TracePage({
       )}
 
       <section className="mt-8">
-        <h2 className="text-sm font-medium">
-          Findings ({trace.length})
-        </h2>
-        <p className="text-muted-foreground mt-1 text-xs">
+        <h2 className="text-lg font-medium">Findings ({trace.length})</h2>
+        <p className="text-muted-foreground mt-1.5 max-w-3xl text-sm text-pretty">
           One row per finding, from detection to decision. A finding with no
           proposal, or a proposal with no decision, shows up as a gap rather than
           disappearing.
+          {trace.length > TABLE_LIMIT && (
+            <>
+              {" "}
+              Showing the first {TABLE_LIMIT}: the page is rendered in one pass,
+              so it is capped rather than left to grow with the dataset. The
+              audit export has every one of them.
+            </>
+          )}
         </p>
 
         <div className="mt-3 overflow-x-auto rounded-lg border">
@@ -178,7 +193,7 @@ export default async function TracePage({
               </TableRow>
             </TableHeader>
             <TableBody>
-              {trace.map((entry) => (
+              {trace.slice(0, TABLE_LIMIT).map((entry) => (
                 <TraceRow key={entry.issueId} entry={entry} />
               ))}
             </TableBody>
@@ -186,7 +201,7 @@ export default async function TracePage({
         </div>
       </section>
 
-      <p className="text-muted-foreground mt-8 text-xs">
+      <p className="text-muted-foreground mt-8 max-w-3xl text-sm text-pretty">
         Not recorded anywhere, and therefore not shown: the raw model request and
         response, per-finding timestamps, and any review decision taken before
         Apply — the workspace keeps those in the browser until you commit them.
@@ -208,20 +223,20 @@ function TraceRow({ entry }: { entry: TraceEntry }) {
             · {entry.columnKey}
           </span>
         )}
-        <div className="text-muted-foreground mt-0.5 text-xs">
+        <div className="text-muted-foreground mt-1 text-xs">
           row{entry.rowIndexes.length > 1 ? "s" : ""}{" "}
           {entry.rowIndexes.join(", ") || "—"} · {entry.severity}
         </div>
       </TableCell>
 
-      <TableCell className="text-muted-foreground max-w-sm align-top text-xs">
+      <TableCell className="text-muted-foreground max-w-sm align-top text-sm whitespace-normal">
         {entry.evidence}
       </TableCell>
 
-      <TableCell className="max-w-sm align-top">
+      <TableCell className="max-w-sm align-top whitespace-normal">
         {suggestion ? (
           <>
-            <div className="font-mono text-xs">
+            <div className="font-mono text-sm">
               {suggestion.action === "delete_row" ? (
                 <span>delete row</span>
               ) : suggestion.action === "no_action" ? (
@@ -235,12 +250,12 @@ function TraceRow({ entry }: { entry: TraceEntry }) {
                 </>
               )}
             </div>
-            <div className="text-muted-foreground mt-0.5 text-xs">
+            <div className="text-muted-foreground mt-1 text-sm">
               {suggestion.rationale}
             </div>
           </>
         ) : (
-          <span className="text-muted-foreground text-xs">
+          <span className="text-muted-foreground text-sm">
             {entry.ambiguous ? "queued for the model" : "no proposal"}
           </span>
         )}
@@ -278,7 +293,7 @@ function TraceRow({ entry }: { entry: TraceEntry }) {
             )}
           </>
         ) : (
-          <span className="text-muted-foreground text-xs">
+          <span className="text-muted-foreground text-sm">
             {suggestion ? "pending" : "—"}
           </span>
         )}
@@ -294,9 +309,9 @@ function display(value: string | null | undefined): string {
 
 function Stat({ label, value }: { label: string; value: string | number }) {
   return (
-    <div className="rounded-lg border p-3">
-      <div className="text-lg font-semibold tabular-nums">{value}</div>
-      <div className="text-muted-foreground text-xs">{label}</div>
+    <div className="bg-card rounded-xl border p-3.5">
+      <div className="text-xl font-semibold tabular-nums">{value}</div>
+      <div className="text-muted-foreground mt-0.5 text-sm">{label}</div>
     </div>
   );
 }
@@ -311,7 +326,7 @@ function Stage({
   detail: string;
 }) {
   return (
-    <div className="rounded-lg border p-3">
+    <div className="bg-card rounded-xl border p-3.5">
       <div className="flex items-center gap-2">
         <span
           className={
@@ -323,7 +338,7 @@ function Stage({
         />
         <span className="text-sm font-medium">{name}</span>
       </div>
-      <p className="text-muted-foreground mt-1 text-xs">{detail}</p>
+      <p className="text-muted-foreground mt-1.5 text-sm text-pretty">{detail}</p>
     </div>
   );
 }

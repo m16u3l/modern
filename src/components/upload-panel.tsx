@@ -3,7 +3,8 @@
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { upload } from "@vercel/blob/client";
-import { Sparkles, Upload } from "lucide-react";
+import { Loader2, Sparkles, Upload } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { MAX_DEMO_ROWS } from "@/lib/contracts";
 
@@ -12,6 +13,7 @@ export function UploadPanel() {
   const inputRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState<"upload" | "demo" | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [dragging, setDragging] = useState(false);
 
   async function startDemo() {
     setBusy("demo");
@@ -56,20 +58,60 @@ export function UploadPanel() {
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex flex-wrap gap-3">
-        <Button onClick={startDemo} disabled={busy !== null}>
-          <Sparkles className="size-4" aria-hidden />
-          {busy === "demo" ? "Loading…" : "Load demo data"}
-        </Button>
+      {/* A file target you can drop onto, rather than a button you must find.
+          The click handler stays on the button so the whole card is not one
+          giant hit area competing with "Load demo data". */}
+      <div
+        onDragOver={(event) => {
+          event.preventDefault();
+          if (busy === null) setDragging(true);
+        }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={(event) => {
+          event.preventDefault();
+          setDragging(false);
+          if (busy !== null) return;
+          const file = event.dataTransfer.files?.[0];
+          if (file) void handleFile(file);
+        }}
+        className={cn(
+          "bg-card flex flex-col items-center gap-4 rounded-xl border border-dashed px-4 py-8 text-center sm:px-6 sm:py-10 transition-colors",
+          dragging && "border-primary/70 bg-accent/50",
+        )}
+      >
+        <p className="font-medium">
+          {busy === "upload"
+            ? "Uploading…"
+            : dragging
+              ? "Drop it to start"
+              : "Drop a CSV here"}
+        </p>
 
-        <Button
-          variant="outline"
-          onClick={() => inputRef.current?.click()}
-          disabled={busy !== null}
-        >
-          <Upload className="size-4" aria-hidden />
-          {busy === "upload" ? "Uploading…" : "Upload a CSV"}
-        </Button>
+        <div className="flex flex-wrap items-center justify-center gap-3">
+          <Button onClick={startDemo} disabled={busy !== null}>
+            {busy === "demo" ? (
+              <Loader2 className="size-4 animate-spin" aria-hidden />
+            ) : (
+              <Sparkles className="size-4" aria-hidden />
+            )}
+            {busy === "demo" ? "Loading…" : "Load demo data"}
+          </Button>
+
+          <Button
+            variant="outline"
+            onClick={() => inputRef.current?.click()}
+            disabled={busy !== null}
+          >
+            <Upload className="size-4" aria-hidden />
+            Choose a file
+          </Button>
+        </div>
+
+        <p className="text-muted-foreground text-sm">
+          No account, nothing stored publicly. Capped at{" "}
+          {MAX_DEMO_ROWS.toLocaleString()} rows for this demo — a product
+          decision, not a technical ceiling.
+        </p>
 
         <input
           ref={inputRef}
@@ -85,15 +127,13 @@ export function UploadPanel() {
       </div>
 
       {error && (
-        <p role="alert" className="text-sm text-red-600 dark:text-red-400">
+        <p
+          role="alert"
+          className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-300"
+        >
           {error}
         </p>
       )}
-
-      <p className="text-muted-foreground text-xs">
-        Capped at {MAX_DEMO_ROWS.toLocaleString()} rows for this demo — a product
-        decision, not a technical ceiling.
-      </p>
     </div>
   );
 }

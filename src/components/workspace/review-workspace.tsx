@@ -2,9 +2,9 @@
 
 import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
 import { toast } from "sonner";
-import { CheckCircle2 } from "lucide-react";
+import { CheckCircle2, Undo2 } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import type {
   DataRow,
   DatasetSummary,
@@ -21,6 +21,7 @@ import {
   statusOf,
   totals,
   type ReviewGroup,
+  type ReviewTotals,
 } from "@/lib/review/state";
 import { DatasetHealth } from "./dataset-health";
 import { GroupList } from "./group-list";
@@ -238,27 +239,33 @@ export function ReviewWorkspace({
   const allDone = counts.pending === 0 && counts.total > 0;
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-5">
       <DatasetHealth summary={summary} totals={counts} ruleShare={ruleShare} />
 
-      <div className="grid gap-4 lg:grid-cols-[minmax(280px,340px)_1fr]">
-        <aside className="flex flex-col gap-2">
-          <div className="flex items-center justify-between">
-            <h2 className="text-sm font-semibold">
-              {groups.length} patterns to review
-            </h2>
+      <div className="grid items-start gap-5 lg:grid-cols-[minmax(300px,360px)_1fr]">
+        {/* The pattern list stays put while the cards scroll past it: it is the
+            map, and losing sight of it was the easiest way to lose the thread.
+            Heights are derived from the sticky header (3.5rem) plus page
+            padding rather than from the old hand-tuned viewport subtractions,
+            which drifted the moment anything above them changed. */}
+        <aside className="flex flex-col gap-2.5 lg:sticky lg:top-20">
+          <div className="flex items-center justify-between gap-2">
+            <h2 className="font-medium">{groups.length} patterns to review</h2>
             {state.history.length > 0 && (
               <Button
                 size="sm"
                 variant="ghost"
-                className="h-7 text-xs"
                 onClick={() => dispatch({ type: "undo" })}
               >
+                <Undo2 aria-hidden />
                 Undo
               </Button>
             )}
           </div>
-          <ScrollArea className="h-[calc(100vh-20rem)] pr-3">
+          {/* Stacked on a phone, the pattern list would otherwise push every
+              suggestion below the fold — 18 full-width cards to scroll past
+              before reaching the thing you came to review. */}
+          <div className="-mr-2 max-h-[45vh] overflow-y-auto pr-2 lg:max-h-[calc(100dvh-11rem)]">
             <GroupList
               groups={groups}
               selectedKey={activeGroup?.key ?? null}
@@ -283,40 +290,23 @@ export function ReviewWorkspace({
                 )
               }
             />
-          </ScrollArea>
+          </div>
         </aside>
 
         <section className="flex flex-col gap-3">
-          {allDone && (
-            <div className="flex items-center justify-between gap-4 rounded-lg border border-emerald-300 bg-emerald-50 p-4 dark:border-emerald-900 dark:bg-emerald-950/30">
-              <p className="flex items-center gap-2 text-sm font-medium text-emerald-900 dark:text-emerald-200">
-                <CheckCircle2 className="size-4" aria-hidden />
-                Every suggestion has a decision. {counts.accepted} accepted,{" "}
-                {counts.edited} edited, {counts.rejected} rejected.
-              </p>
-              {onApply && (
-                <Button
-                  onClick={() => onApply(buildDecisionList(state, suggestions))}
-                  disabled={applying}
-                >
-                  {applying ? "Applying…" : "Apply & export"}
-                </Button>
-              )}
-            </div>
-          )}
-
           {activeGroup ? (
             <>
-              <div className="flex items-baseline justify-between gap-2">
-                <h2 className="font-semibold">{activeGroup.label}</h2>
-                <p className="text-muted-foreground text-xs">
+              <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+                <h2 className="text-lg font-medium text-pretty">
+                  {activeGroup.label}
+                </h2>
+                <p className="text-muted-foreground text-sm tabular-nums">
                   {activeGroup.pending} pending · {activeGroup.resolved} resolved
                 </p>
               </div>
 
-              <ScrollArea className="h-[calc(100vh-22rem)] pr-3">
-                <div className="flex flex-col gap-3">
-                  {activeGroup.suggestions.map((suggestion) => (
+              <div className="flex flex-col gap-3 pb-4">
+                {activeGroup.suggestions.map((suggestion) => (
                     <SuggestionCard
                       key={suggestion.id}
                       suggestion={suggestion}
@@ -358,20 +348,97 @@ export function ReviewWorkspace({
                           label: "Reset",
                         })
                       }
-                    />
-                  ))}
-                </div>
-              </ScrollArea>
+                  />
+                ))}
+              </div>
             </>
           ) : (
             <p className="text-muted-foreground text-sm">
               No suggestions to review.
             </p>
           )}
-
-          <ShortcutLegend />
         </section>
       </div>
+
+      <ActionBar
+        allDone={allDone}
+        counts={counts}
+        applying={applying}
+        onApply={
+          onApply ? () => onApply(buildDecisionList(state, suggestions)) : undefined
+        }
+      />
+    </div>
+  );
+}
+
+/**
+ * Always on screen, rather than a success banner that only appears once the last
+ * decision lands. A reviewer part-way through a thousand rows should be able to
+ * see how much is left and where the exit is without scrolling to find out.
+ */
+function ActionBar({
+  allDone,
+  counts,
+  applying,
+  onApply,
+}: {
+  allDone: boolean;
+  counts: ReviewTotals;
+  applying: boolean;
+  onApply?: () => void;
+}) {
+  return (
+    <div
+      className={cn(
+        "sticky bottom-0 z-20 flex items-center justify-between gap-x-6 gap-y-3 rounded-t-xl border-t px-3 py-3 sm:flex-wrap sm:px-4",
+        allDone
+          ? "border-emerald-300 bg-emerald-50/90 dark:border-emerald-900 dark:bg-emerald-950/80"
+          : "bg-background/90",
+      )}
+    >
+      {allDone ? (
+        <p className="flex items-center gap-2 text-sm font-medium text-emerald-900 dark:text-emerald-200">
+          <CheckCircle2 className="size-4 shrink-0" aria-hidden />
+          Every suggestion has a decision. {counts.accepted} accepted,{" "}
+          {counts.edited} edited, {counts.rejected} rejected.
+        </p>
+      ) : (
+        <>
+          {/* The shortcut legend is advice for a keyboard that a phone does not
+              have; the count is what is actually useful on a small screen. */}
+          <ShortcutLegend />
+          <p className="text-muted-foreground text-sm tabular-nums sm:hidden">
+            {counts.pending} left
+          </p>
+        </>
+      )}
+
+      {onApply && (
+        <Button
+          onClick={onApply}
+          disabled={applying || !allDone}
+          title={
+            allDone
+              ? undefined
+              : `${counts.pending} suggestions still need a decision`
+          }
+        >
+          {applying ? (
+            "Applying…"
+          ) : allDone ? (
+            "Apply & export"
+          ) : (
+            <>
+              Apply &amp; export
+              <span className="hidden sm:inline">
+                {" "}
+                ({counts.pending} left)
+              </span>
+            </>
+          )}
+        </Button>
+      )}
     </div>
   );
 }
@@ -386,10 +453,10 @@ function ShortcutLegend() {
   ];
 
   return (
-    <div className="text-muted-foreground flex flex-wrap items-center gap-3 border-t pt-2 text-xs">
+    <div className="text-muted-foreground hidden flex-wrap items-center gap-x-3.5 gap-y-2 text-xs sm:flex">
       {shortcuts.map(([key, label]) => (
-        <span key={key} className="inline-flex items-center gap-1">
-          <kbd className="bg-muted rounded border px-1.5 py-0.5 font-mono">
+        <span key={key} className="inline-flex items-center gap-1.5">
+          <kbd className="bg-muted text-foreground inline-flex h-5 min-w-5 items-center justify-center rounded border px-1.5 font-mono text-[0.75rem] font-medium">
             {key}
           </kbd>
           {label}

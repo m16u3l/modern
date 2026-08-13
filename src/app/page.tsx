@@ -4,16 +4,16 @@ import { UploadPanel } from "@/components/upload-panel";
 
 export default function Home() {
   return (
-    <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center gap-8 p-6">
-      <div>
-        <h1 className="text-3xl font-semibold tracking-tight">
-          AI Data Cleanup Assistant
+    <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center gap-8 px-4 py-10 sm:gap-10 sm:px-6 sm:py-14">
+      <div className="flex flex-col gap-4">
+        <h1 className="text-3xl font-semibold text-balance">
+          Clean up a messy CSV without trusting a model blindly
         </h1>
-        <p className="text-muted-foreground mt-2">
-          Upload a messy CSV. A deterministic rules engine catches everything it
-          can on its own; only the genuinely ambiguous cases reach an LLM. You
-          review every proposed fix, in patterns rather than one row at a time,
-          and export a clean file plus a full audit log.
+        <p className="text-muted-foreground text-base text-pretty">
+          A deterministic rules engine catches everything it can on its own; only
+          the genuinely ambiguous cases reach an LLM. You review every proposed
+          fix, grouped by pattern rather than one row at a time, and export a
+          clean file plus a full audit log.
         </p>
       </div>
 
@@ -32,9 +32,12 @@ export default function Home() {
         />
       </dl>
 
-      <p className="text-muted-foreground text-xs">
+      <p className="text-muted-foreground text-sm">
         Want to see the review experience without uploading anything?{" "}
-        <Link href="/review" className="underline underline-offset-2">
+        <Link
+          href="/review"
+          className="text-foreground font-medium underline decoration-border underline-offset-4 transition-colors hover:decoration-current"
+        >
           Open the workspace on fixture data
         </Link>
         .
@@ -53,12 +56,17 @@ function Feature({
   body: string;
 }) {
   return (
-    <div className="rounded-lg border p-4">
-      <dt className="flex items-center gap-2 text-sm font-medium">
-        {icon}
+    <div className="bg-card flex flex-col gap-2 rounded-xl border p-5">
+      <dt className="flex items-center gap-2.5 font-medium">
+        <span
+          className="bg-muted text-muted-foreground flex size-8 items-center justify-center rounded-lg"
+          aria-hidden
+        >
+          {icon}
+        </span>
         {title}
       </dt>
-      <dd className="text-muted-foreground mt-1 text-sm">{body}</dd>
+      <dd className="text-muted-foreground text-sm text-pretty">{body}</dd>
     </div>
   );
 }

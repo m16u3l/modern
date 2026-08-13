@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { Download, FileJson } from "lucide-react";
+import { CheckCircle2, Download, FileJson } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { ReviewWorkspace } from "@/components/workspace/review-workspace";
@@ -76,11 +76,16 @@ export function DatasetView({ datasetId }: { datasetId: string }) {
   if (progress) {
     return (
       <div className="flex flex-col gap-4">
-        <div className="bg-card rounded-lg border p-4">
-          <p className="text-sm font-medium">{STAGE_LABELS[progress.stage]}</p>
+        <div className="bg-card rounded-xl border p-4 sm:p-5">
+          <div className="flex items-baseline justify-between gap-4">
+            <p className="font-medium">{STAGE_LABELS[progress.stage]}</p>
+            <p className="text-muted-foreground text-sm tabular-nums">
+              {Math.round(progress.progress * 100)}%
+            </p>
+          </div>
           <Progress value={progress.progress * 100} className="mt-3 h-2" />
           {progress.detail && (
-            <p className="text-muted-foreground mt-2 text-xs">{progress.detail}</p>
+            <p className="text-muted-foreground mt-2 text-sm">{progress.detail}</p>
           )}
         </div>
         <WorkspaceSkeleton />
@@ -147,10 +152,16 @@ function ExportPanel({
   filename: string;
 }) {
   return (
-    <div className="mx-auto flex max-w-xl flex-col gap-4 rounded-lg border p-8">
+    <div className="bg-card mx-auto flex max-w-xl flex-col gap-5 rounded-xl border p-6 sm:p-8">
       <div>
-        <h2 className="text-lg font-semibold">Applied to {filename}</h2>
-        <p className="text-muted-foreground mt-1 text-sm">
+        <span
+          className="mb-4 flex size-10 items-center justify-center rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300"
+          aria-hidden
+        >
+          <CheckCircle2 className="size-5" />
+        </span>
+        <h2 className="text-xl font-semibold">Applied to {filename}</h2>
+        <p className="text-muted-foreground mt-2 text-pretty">
           {summary.cellsChanged} cells rewritten, {summary.rowsDeleted} rows
           removed, across {summary.rowsTouched} rows. All {summary.recorded}{" "}
           decisions were recorded in the audit log, rejections included.
@@ -158,13 +169,13 @@ function ExportPanel({
       </div>
 
       <div className="flex flex-wrap gap-3">
-        <Button asChild>
+        <Button size="lg" asChild>
           <a href={`/api/datasets/${datasetId}/export?format=csv`} download>
             <Download className="size-4" aria-hidden />
             Download cleaned CSV
           </a>
         </Button>
-        <Button variant="outline" asChild>
+        <Button size="lg" variant="outline" asChild>
           <a href={`/api/datasets/${datasetId}/export?format=audit`} download>
             <FileJson className="size-4" aria-hidden />
             Download audit log
@@ -172,7 +183,7 @@ function ExportPanel({
         </Button>
       </div>
 
-      <p className="text-muted-foreground text-xs">
+      <p className="text-muted-foreground border-t pt-4 text-sm text-pretty">
         The audit log lists every decision with its before and after value, which
         detector proposed it, and whether a human accepted it. The same trail is
         browsable at{" "}

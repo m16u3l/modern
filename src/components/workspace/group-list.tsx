@@ -28,29 +28,35 @@ export function GroupList({
       {groups.map((group) => {
         const done = group.pending === 0;
         const heldBack = group.bulkAcceptable.length < group.pending;
+        const selected = selectedKey === group.key;
 
         return (
           <li key={group.key}>
             <div
               className={cn(
-                "rounded-lg border p-3 transition-colors",
-                selectedKey === group.key
-                  ? "border-primary/60 bg-accent/40"
-                  : "hover:bg-accent/20",
-                done && "opacity-60",
+                // The selected pattern gets a left rule rather than only a tint:
+                // at a glance it is the one thing telling you where you are.
+                "relative overflow-hidden rounded-xl border p-3.5 transition-colors",
+                "before:absolute before:inset-y-0 before:left-0 before:w-0.5 before:transition-colors",
+                selected
+                  ? "border-primary/50 bg-accent/50 before:bg-primary"
+                  : "hover:bg-accent/25 before:bg-transparent",
+                done && !selected && "opacity-60",
               )}
             >
               <button
                 type="button"
                 onClick={() => onSelect(group.key)}
-                className="w-full text-left"
-                aria-current={selectedKey === group.key}
+                className="w-full rounded-md text-left focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
+                aria-current={selected}
               >
                 <div className="flex items-start justify-between gap-2">
-                  <span className="text-sm font-medium">{group.label}</span>
+                  <span className="text-sm font-medium text-pretty">
+                    {group.label}
+                  </span>
                   <span
                     className={cn(
-                      "shrink-0 rounded-full px-2 py-0.5 font-mono text-xs",
+                      "shrink-0 rounded-full px-2 py-0.5 text-xs font-medium tabular-nums",
                       done
                         ? "bg-emerald-100 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-200"
                         : "bg-muted text-muted-foreground",
@@ -59,14 +65,14 @@ export function GroupList({
                     {done ? "done" : `${group.pending} left`}
                   </span>
                 </div>
-                <div className="text-muted-foreground mt-1 flex items-center gap-2 text-xs">
+                <div className="text-muted-foreground mt-1.5 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-xs">
                   <span>{group.suggestions.length} suggestions</span>
                   {group.lowConfidence > 0 && (
                     <span
-                      className="inline-flex items-center gap-1 text-amber-600 dark:text-amber-400"
+                      className="inline-flex items-center gap-1 text-amber-700 dark:text-amber-400"
                       title="Held back from bulk accept — low confidence or nothing to apply"
                     >
-                      <TriangleAlert className="size-3" aria-hidden />
+                      <TriangleAlert className="size-3.5" aria-hidden />
                       {group.lowConfidence} need a look
                     </span>
                   )}
@@ -74,11 +80,10 @@ export function GroupList({
               </button>
 
               {!done && (
-                <div className="mt-2 flex gap-2">
+                <div className="mt-3 flex gap-2">
                   <Button
                     size="sm"
                     variant="outline"
-                    className="h-7 px-2 text-xs"
                     disabled={group.bulkAcceptable.length === 0}
                     onClick={() => onAcceptAll(group)}
                     title={
@@ -87,17 +92,12 @@ export function GroupList({
                         : undefined
                     }
                   >
-                    <Check className="size-3" aria-hidden />
+                    <Check aria-hidden />
                     Accept all
                     {heldBack && ` (${group.bulkAcceptable.length})`}
                   </Button>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="h-7 px-2 text-xs"
-                    onClick={() => onRejectAll(group)}
-                  >
-                    <X className="size-3" aria-hidden />
+                  <Button size="sm" variant="ghost" onClick={() => onRejectAll(group)}>
+                    <X aria-hidden />
                     Reject all
                   </Button>
                 </div>

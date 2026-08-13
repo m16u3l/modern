@@ -28,6 +28,14 @@ const STATUS_LABELS: Record<ReviewStatus, string> = {
   edited: "Edited",
 };
 
+const STATUS_PILLS: Record<ReviewStatus, string> = {
+  pending: "",
+  accepted:
+    "bg-emerald-100 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-200",
+  rejected: "bg-muted text-muted-foreground",
+  edited: "bg-blue-100 text-blue-900 dark:bg-blue-950 dark:text-blue-200",
+};
+
 export function SuggestionCard({
   suggestion,
   issue,
@@ -74,18 +82,18 @@ export function SuggestionCard({
       ref={ref}
       onClick={onFocus}
       className={cn(
-        "rounded-lg border p-4 transition-colors",
+        "rounded-xl border p-4 transition-colors sm:p-5",
         STATUS_STYLES[status],
-        focused && "ring-primary/60 ring-2 ring-offset-1",
+        focused && "ring-primary/50 ring-offset-background ring-2 ring-offset-2",
       )}
       data-testid="suggestion-card"
     >
-      <div className="mb-3 flex flex-wrap items-center gap-2">
-        <span className="text-muted-foreground inline-flex items-center gap-1 text-xs">
+      <div className="mb-3.5 flex flex-wrap items-center gap-2.5">
+        <span className="text-muted-foreground inline-flex items-center gap-1.5 text-xs">
           {suggestion.source === "llm" ? (
-            <Bot className="size-3.5" aria-hidden />
+            <Bot className="size-4" aria-hidden />
           ) : (
-            <Ruler className="size-3.5" aria-hidden />
+            <Ruler className="size-4" aria-hidden />
           )}
           {suggestion.source === "llm" ? "LLM" : "Rule"}
         </span>
@@ -96,18 +104,24 @@ export function SuggestionCard({
           </span>
         )}
         {status !== "pending" && (
-          <span className="ml-auto inline-flex items-center gap-1 text-xs font-medium">
-            {STATUS_LABELS[status]}
+          <span className="ml-auto inline-flex items-center gap-1">
+            <span
+              className={cn(
+                "rounded-full px-2.5 py-0.5 text-xs font-medium",
+                STATUS_PILLS[status],
+              )}
+            >
+              {STATUS_LABELS[status]}
+            </span>
             <Button
-              size="sm"
+              size="icon-sm"
               variant="ghost"
-              className="h-6 px-1.5"
               onClick={(event) => {
                 event.stopPropagation();
                 onReset();
               }}
             >
-              <Undo2 className="size-3.5" aria-hidden />
+              <Undo2 className="size-4" aria-hidden />
               <span className="sr-only">Reset decision</span>
             </Button>
           </span>
@@ -130,12 +144,10 @@ export function SuggestionCard({
         />
       )}
 
-      <p className="text-muted-foreground mt-3 text-sm">
-        {suggestion.rationale}
-      </p>
+      <p className="mt-3.5 text-sm">{suggestion.rationale}</p>
 
       {issue && (
-        <p className="text-muted-foreground/80 mt-1 text-xs">
+        <p className="text-muted-foreground mt-1 text-xs">
           Detected because: {issue.evidence}
         </p>
       )}
@@ -148,39 +160,36 @@ export function SuggestionCard({
         />
       )}
 
-      <div className="mt-3 flex gap-2">
+      <div className="mt-4 flex gap-2">
         <Button
-          size="sm"
           variant={status === "accepted" ? "default" : "outline"}
           onClick={(event) => {
             event.stopPropagation();
             onAccept();
           }}
         >
-          <Check className="size-4" aria-hidden />
+          <Check aria-hidden />
           Accept
         </Button>
         <Button
-          size="sm"
           variant={status === "rejected" ? "secondary" : "outline"}
           onClick={(event) => {
             event.stopPropagation();
             onReject();
           }}
         >
-          <X className="size-4" aria-hidden />
+          <X aria-hidden />
           Reject
         </Button>
         {canEdit && (
           <Button
-            size="sm"
             variant="ghost"
             onClick={(event) => {
               event.stopPropagation();
               onEditingChange(true);
             }}
           >
-            <Pencil className="size-4" aria-hidden />
+            <Pencil aria-hidden />
             Edit
           </Button>
         )}
@@ -223,12 +232,13 @@ function InlineEditor({
         className="max-w-xs font-mono"
         aria-label="Override the proposed value"
       />
-      <Button size="sm" onClick={() => onCommit(draft)}>
-        Save
-      </Button>
-      <Button size="sm" variant="ghost" onClick={onCancel}>
+      <Button onClick={() => onCommit(draft)}>Save</Button>
+      <Button variant="ghost" onClick={onCancel}>
         Cancel
       </Button>
+      <span className="text-muted-foreground w-full text-xs">
+        Enter to save, Esc to cancel.
+      </span>
     </div>
   );
 }
@@ -244,12 +254,12 @@ function RowContext({
   highlight?: string;
 }) {
   return (
-    <dl className="mt-3 flex flex-wrap gap-x-4 gap-y-1 border-t pt-3 text-xs">
+    <dl className="mt-3.5 flex flex-wrap gap-x-5 gap-y-1.5 border-t pt-3.5 text-xs">
       {/* Driven by the dataset's column order, never by the row's own keys:
           those come back from jsonb reordered, which would show the reviewer a
           record whose fields are scrambled. */}
       {columnOrder.map((key) => (
-        <div key={key} className="flex gap-1">
+        <div key={key} className="flex items-baseline gap-1.5">
           <dt
             className={cn(
               "text-muted-foreground",
@@ -261,7 +271,9 @@ function RowContext({
           <dd
             className={cn(
               "font-mono",
-              key === highlight ? "text-foreground font-medium" : "text-muted-foreground",
+              key === highlight
+                ? "text-foreground bg-muted rounded px-1 font-medium"
+                : "text-muted-foreground",
             )}
           >
             {row.data[key] ? row.data[key] : "—"}
