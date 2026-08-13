@@ -1,0 +1,7 @@
+email,email,,full_name,note,amount
+ana@example.com,ana.torres@work.example.com,1,"Torres, Ana",called twice; no answer,"1,240.50"
+carlos@example.com,,2,Ruiz  Carlos,, 890
+"mei@example,com",mei@example.com,3,"Chen, Mei","said ""call back Friday""","USD 2,050.00"
+lucía@example.com,lucia@example.com,4,"Fernández, Lucía",prefers email,-45.00
+,omar@example.com,5,"Haddad, Omar",N/A,0
+ana@example.com,ana.torres@work.example.com,6,"Torres, Ana",called twice; no answer,"1,240.50"
