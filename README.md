@@ -1,36 +1,236 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# AI Data Cleanup Assistant
 
-## Getting Started
+Upload a messy CSV. A deterministic rules engine resolves everything it can on
+its own; only the genuinely ambiguous cases reach an LLM. You review every
+proposed fix — grouped by pattern, not one row at a time — then export a clean
+file and a full audit log.
 
-First, run the development server:
+**Live:** https://ai-data-cleanup-i8wnly34b-m16u3ls-projects.vercel.app
+**Demo data:** click *Load demo data* on the home page, or grab
+[`demo/messy-customers.csv`](demo/messy-customers.csv).
+
+On the bundled demo dataset: **53 issues found, 35 resolved by rules (66%), 18
+escalated to a model.** That ratio is the whole argument of the design.
+
+---
+
+## Running it locally
 
 ```bash
+npm install
+cp .env.example .env.local     # fill in the values below
+npm run db:push                # creates the six tables
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+| Variable | Needed for |
+|---|---|
+| `DATABASE_URL` | Supabase **transaction pooler**, port 6543. Used at runtime. |
+| `DIRECT_URL` | Supabase **direct connection**, port 5432. Used by drizzle-kit only. |
+| `BLOB_READ_WRITE_TOKEN` | Vercel Blob. `vercel env pull` writes it for you. |
+| `ANTHROPIC_API_KEY` | Optional. Without it the app falls back to a deterministic stub and still runs end to end. |
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+`npm test` needs none of them.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+### Running it on a free model
 
-## Learn More
+The LLM adapter is one implementation parameterised by environment, so any
+OpenAI-compatible provider works by changing two variables:
 
-To learn more about Next.js, take a look at the following resources:
+```bash
+LLM_PROVIDER=openai-compatible
+OPENAI_COMPATIBLE_BASE_URL=https://api.groq.com/openai/v1   # or Gemini, OpenRouter, Ollama
+OPENAI_COMPATIBLE_MODEL=llama-3.3-70b-versatile
+OPENAI_COMPATIBLE_API_KEY=...
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+`.env.example` lists the base URLs for Groq, Google Gemini's compatibility
+endpoint, OpenRouter and a local Ollama.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+---
 
-## Deploy on Vercel
+## Architecture
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+```mermaid
+flowchart TD
+    A[Browser] -->|direct upload| B[(Vercel Blob<br/>private)]
+    A -->|register| C[POST /api/datasets]
+    C --> D[(Postgres)]
+    A -->|loop until done| E[POST .../profile]
+    E -->|reads a chunk| D
+    E --> F[Rules engine<br/>pure functions]
+    F -->|resolved| D
+    F -->|ambiguous| G[POST .../enrich]
+    A -->|loop until done| G
+    G --> H[LlmPort]
+    H --> I[Anthropic]
+    H --> J[OpenAI-compatible]
+    H --> K[Fake]
+    G -->|sanitised suggestions| D
+    D --> L[Review workspace]
+    L -->|accepted decisions| M[POST .../apply<br/>one transaction]
+    M --> N[Clean CSV + audit log]
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+The engine in `src/lib/profiling/` imports nothing from Next, Drizzle or
+Anthropic. Rows in, findings out. Everything that knows about a database lives
+in `src/lib/persistence.ts` and the route handlers.
+
+---
+
+## Decisions and trade-offs
+
+### Why a hybrid, and not just handing the file to a model
+
+Four reasons, in order of how much they mattered:
+
+- **Determinism.** "Normalise 23 phone numbers to the dominant format" has one
+  right answer. A model gets it right most of the time; a regex gets it right
+  every time, and a reviewer can predict what it will do before it runs.
+- **Auditability.** Every rule-produced suggestion carries evidence a human can
+  check — *"34 of 40 values use (DDD) DDD-DDDD; this one uses DDD-DDD-DDDD"*.
+  "The model thought so" is not evidence.
+- **Cost and latency.** Two thirds of the issues never become tokens. At 5k rows
+  that is the difference between a demo and a bill.
+- **Testability.** Pure functions have unit tests. Prompts have vibes.
+
+The model earns its place on exactly the questions rules are bad at: is
+"Isabella Silva" the same person as "Isabela Silva"? Is `lucia.fernandez@example`
+a truncated paste or a genuinely different domain? Those need world knowledge,
+and the engine routes precisely those cases and nothing else.
+
+### Why the review UI groups by pattern
+
+This was the highest-leverage decision in the build. The demo dataset produces
+53 suggestions; a real one produces thousands. Nobody audits 400 cards.
+
+So suggestions collapse into ~13 groups keyed on issue type plus column —
+*"Inconsistent format · column phone — 5 suggestions"* — with bulk accept and
+reject per group, expandable to the individual diffs. A reviewer audits a
+handful of patterns and spot-checks inside each. That is how the job actually
+gets done.
+
+Two details that follow from taking that seriously:
+
+- **Bulk accept has a confidence gate.** Anything under 0.7, and anything whose
+  action is "no action", is excluded from *Accept all* and flagged in the
+  sidebar. If bulk accept could sweep up the uncertain cases, it would be a
+  trap rather than a shortcut.
+- **The whole review is keyboard-driven** (`A`/`R`/`E`, arrows, `⌘Z`), because
+  the difference between 400 clicks and 400 keystrokes is whether anyone
+  finishes.
+
+### Why the pipeline runs in chunks
+
+Two platform limits shaped this more than anything else:
+
+- Serverless request bodies cap at 4.5 MB, so the CSV goes **straight from the
+  browser to blob storage** and never passes through a function.
+- Invocations time out, so profiling advances a cursor 1000 rows at a time and
+  the browser drives the loop. A 5k-row file is five short calls with a real
+  progress bar, not one request praying it finishes.
+
+The subtle part: **column statistics are computed once and passed into every
+chunk.** Recomputing them per chunk would let the same phone format be a
+minority in chunk 1 and the majority in chunk 4. There is a test asserting that
+chunked and whole-dataset runs produce identical findings.
+
+### Why `LlmPort`
+
+Three payoffs, all of which were collected during this build:
+
+- The test suite runs offline against a fake adapter, with one contract test
+  every adapter must satisfy.
+- The public demo works without an API key — it degrades to "no LLM", not to
+  "broken".
+- Supporting free providers cost one file. Groq, Gemini, OpenRouter, DeepSeek
+  and Ollama all speak the OpenAI chat API, so one parameterised adapter covers
+  all five.
+
+It is also the seam along which the profiling engine would be extracted into a
+separate service if volume demanded it — nothing upstream of the port knows what
+a model is.
+
+### Why the blob store is private
+
+The default is public, and this app exists specifically to process files full of
+other people's customer records. An unguessable URL is not access control.
+Private costs one presigned-URL step to read the file back server-side
+(`src/lib/blob.ts`) and removes a whole category of embarrassment.
+
+### Why Postgres over the originally-planned Mongo
+
+Apply writes row updates, suggestion statuses and audit entries. If those three
+diverge, the exported CSV and the audit log disagree about what happened — the
+one failure this tool cannot survive. One transaction removes the question.
+It also means the demo metrics come from a `GROUP BY` rather than bookkeeping.
+
+### What I'd do differently at 1M rows
+
+Request-driven chunking is the ceiling here. At a million rows I'd put the
+dataset on a queue and run workers: profiling is embarrassingly parallel per
+chunk, and the client would poll a job status instead of driving the loop.
+
+The specific thing that breaks first is the cross-row duplicate pass, which
+currently loads every row into one invocation. That is fine at the 5k demo cap
+and is deliberate — the fix is to materialise blocking keys during ingest and
+run the comparison over those, which is a bigger change than this build
+warranted.
+
+---
+
+## Known limitations
+
+- **5,000-row cap**, enforced in the UI with a message. A product decision for
+  the demo, not a technical ceiling.
+- **Slash dates are read as day-first.** `05/02/2024` becomes 5 February, and
+  the suggestion says so with a confidence below the bulk-accept threshold so it
+  cannot be swept up accidentally. There is no way to resolve `05/02` from the
+  value alone, and guessing silently would be worse.
+- **Fuzzy duplicate detection uses blocking**, so it trades some recall for not
+  being O(n²). Two near-identical records that share no three-character prefix
+  in any column will be missed.
+- **Deletes are soft.** Rows accepted for deletion are flagged and filtered from
+  the export rather than removed, so the audit log keeps referring to something
+  real.
+- **No auth, no multi-tenancy.** Anyone with the URL sees every dataset. Out of
+  scope for a one-day build and it would be the first thing to add.
+- **`merge_rows` is in the contract but never produced.** Duplicate resolution
+  currently deletes rather than merges.
+- **No E2E tests.** The review workspace has component tests covering the
+  keyboard flow, bulk accept and undo; the pipeline is covered at the unit
+  level. A browser test would be the next thing worth adding.
+
+---
+
+## Tests
+
+```bash
+npm test        # 132 tests
+npm run lint
+npm run typecheck
+```
+
+Covers each detector, the CSV parser round-trip, the apply planner, the review
+reducer, the LLM output sanitiser, and the review workspace's keyboard and bulk
+interactions. CI runs lint → typecheck → test → build on every push and PR.
+
+The sanitiser tests are worth a look: everything a model returns is dropped if
+it names a row or candidate that was not sent, confidence is clamped, and a
+proposal with nothing to propose is demoted. A hallucination should never reach
+the review UI, let alone the database.
+
+---
+
+## A note on how this was built
+
+Built with Claude Code, working from a plan agreed up front and executed phase
+by phase. The parts that benefited most were the ones with a lot of careful,
+repetitive surface: the seeded messy dataset, the detector test suite, and the
+adapter that has to tolerate five different providers' JSON quirks.
+
+Three bugs were caught by tests rather than by review, which is the argument for
+having written them: `shapeOf` clobbering its own output (it replaced digits
+with `D`, then letters with `A` — and `D` is a letter), the edit shortcut
+opening an editor for delete-row suggestions that have no value to edit, and
+column statistics being recomputed per chunk instead of once.

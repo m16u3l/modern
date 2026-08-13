@@ -8,6 +8,17 @@ deliverable — delete before submitting if you want a clean repo.
 (2) the accept/reject review UX feels good, (3) decisions are defensible in the
 README and video.
 
+### Where things live
+
+| | |
+|---|---|
+| Repo | `m16u3l/modern` (public), branch `main` |
+| Vercel project | `m16u3ls-projects/ai-data-cleanup` |
+| Production URL | https://ai-data-cleanup-i8wnly34b-m16u3ls-projects.vercel.app |
+| Supabase project ref | `fapojysgmrjkfcycjyxt` (MCP server configured in `.mcp.json`) |
+| Blob store | `csv-uploads`, **private**, already linked to the project |
+| Approved plan | `~/.claude/plans/quiero-hacer-esto-cryptic-stardust.md` (plan only, no progress) |
+
 ---
 
 ## Stack as built
@@ -31,24 +42,39 @@ Anthropic SDK 0.116 / OpenAI SDK 7.4 · Zod 4 · PapaParse
 
 | Phase | State | Notes |
 |---|---|---|
-| A — Deployed skeleton | **Blocked** | Vercel project + Blob store done. Schema written but **not migrated** — needs Supabase credentials. Nothing deployed yet. |
+| A — Deployed skeleton | **Blocked** | Vercel project + Blob store done, deploy is Ready. Schema written but **not migrated** — needs Supabase credentials. See the two blockers below. |
 | B — Contracts + fixtures | Done | `src/lib/contracts.ts`, `src/lib/fixtures.ts` |
 | C — Review workspace | Done | `src/components/workspace/**`, works against fixtures at `/review` |
 | D — Rules engine + LLM port | Done | `src/lib/profiling/**`, `src/lib/llm/**`. Real providers unverified (no key yet). |
-| E — Ingest + chunked pipeline | **Written, unverified** | All routes exist and typecheck. Nothing has ever run against a real database. |
-| F — Apply / export / audit | Not started | |
-| G — Tests, CI, demo CSV, README | Partial | 119 tests green. No CI workflow, no `demo/messy-customers.csv` file, no README. |
+| E — Ingest + chunked pipeline | **Written, unverified** | All routes exist, typecheck and build. Nothing has ever run against a real database. |
+| F — Apply / export / audit | **Written, unverified** | `apply` (one transaction), streamed CSV export, audit JSON export. Pure planner is unit-tested. |
+| G — Tests, CI, demo CSV, README | Done | CI workflow, `demo/messy-customers.csv` (generated from fixtures), full README with the trade-offs section. |
 | Video | Not started | |
 
-**Tests**: 119 passing, 4 skipped (the skipped ones are the live-provider contract
+**Tests**: 132 passing, 4 skipped (the skipped ones are the live-provider contract
 tests, which run only when API keys are present).
+
+**Measured on the demo dataset**: 53 findings, 35 resolved by rules (66%), 18
+escalated to the model. Regenerate with `profileDataset(FIXTURE_ROWS, headers)`.
 
 ---
 
-## THE BLOCKER
+## THE BLOCKERS
 
-The Supabase database password. Everything in phase E and beyond writes to Postgres
-and has never executed.
+### 1. Vercel Deployment Protection is on
+
+Every route on the production URL 302s to `vercel.com/sso-api`. An evaluator
+opening the link sees a login screen, not the app — which fails the challenge's
+first criterion outright.
+
+Fix: Vercel → project `ai-data-cleanup` → Settings → Deployment Protection →
+Vercel Authentication set to `Disabled`, or `Only Preview Deployments` (which
+leaves production open and still protects previews). This is a change to the
+user's project settings, so it needs their say-so.
+
+### 2. The Supabase database password
+
+Everything in phases E and F writes to Postgres and has never executed.
 
 Needed in `.env.local`:
 
@@ -75,13 +101,60 @@ Without it the pipeline falls back to `FakeLlm` and still completes end to end.
 
 1. Put `DATABASE_URL` / `DIRECT_URL` in `.env.local`.
 2. `npm run db:push` to create the six tables.
-3. `npm run dev`, click **Load demo data**, watch parse → profile → enrich → workspace.
+3. `npm run dev`, click **Load demo data**, watch parse → profile → enrich → workspace,
+   then apply and download both exports. This is the first real exercise of phases E and F.
 4. Verify `/api/health` returns `{ ok: true, db: "connected" }`.
-5. Phase F: `POST /api/datasets/[id]/apply` in a transaction writing `rows` + `audit`,
-   then `GET .../export?format=csv|audit`.
-6. Phase G: `.github/workflows/ci.yml`, `demo/messy-customers.csv`, README.
-7. Push env vars to Vercel (`vercel env add`), deploy, verify in production.
-8. Record the video.
+5. Push env vars to Vercel (`vercel env add DATABASE_URL production`, etc.), redeploy.
+6. Turn off Deployment Protection and re-check every route returns 200.
+7. Record the 5-minute video. Practise the 3:00–4:15 architecture segment first.
+8. Record a GIF for the README (there is a placeholder-free spot right under the title).
+
+Optional if time allows: fill in the README's live URL if it changes, and delete
+this file before submitting.
+
+### Exact commands for step 5
+
+```bash
+vercel env add DATABASE_URL production        # paste the pooler string, port 6543
+vercel env add DIRECT_URL production          # paste the direct string, port 5432
+vercel env add LLM_PROVIDER production        # "anthropic", or "fake" to ship without a key
+vercel env add ANTHROPIC_API_KEY production   # only if LLM_PROVIDER=anthropic
+vercel --prod                                 # redeploy with the new env
+```
+
+`BLOB_READ_WRITE_TOKEN` is already set in Vercel by the blob store link — do not
+add it by hand.
+
+### Regenerating the demo CSV
+
+`demo/messy-customers.csv` is generated, not hand-written. If the fixtures
+change, regenerate so the two never drift:
+
+```bash
+npx tsx scripts/generate-demo-csv.mts
+```
+
+---
+
+## Video plan (5 minutes, in English)
+
+| Minute | Content |
+|---|---|
+| 0:00–0:30 | Who you are and what you built, in one sentence |
+| 0:30–1:30 | Demo: load demo data → profiling with real progress → workspace |
+| 1:30–3:00 | Review: grouping, diff, bulk accept, undo, export + audit |
+| 3:00–4:15 | Architecture: the rules/LLM hybrid, "66% solved without AI", cost per run, chunking |
+| 4:15–5:00 | Trade-offs, what you cut deliberately, what you'd do with a week |
+
+Record 3:00–4:15 first and rehearse it — that is the segment that decides it.
+
+## If time runs short
+
+Cut in this order: cost panel → IQR outliers → fuzzy duplicates → LLM parser
+tests → Sonnet escalation.
+
+**Never cut**: the deploy, the demo data button, the grouping in the UI, the
+README decisions section, the video.
 
 ---
 
