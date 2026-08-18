@@ -4,7 +4,7 @@ Study log. Every concept that shows up while building gets written down in the
 moment: **what it is → why it matters → where you saw it**. The goal is not code
 that works, it is being able to explain why it works.
 
-Full plan: `~/.claude/plans/vamos-a-usar-este-ticklish-beaver.md`
+Full plan: [`PLAN.md`](PLAN.md). Results so far: [`EVALS.md`](EVALS.md).
 
 ---
 
