@@ -40,6 +40,7 @@ yarn-error.log*
 # working notes — kept on disk, deliberately not part of the deliverable
 PROGRESS.md
 VIDEO-SCRIPT.md
+PRESENTATION.html
 
 # typescript
 *.tsbuildinfo

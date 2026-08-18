@@ -215,7 +215,7 @@ warranted.
   the export rather than removed, so the audit log keeps referring to something
   real.
 - **No auth, no multi-tenancy.** Anyone with the URL sees every dataset. Out of
-  scope for a one-day build and it would be the first thing to add.
+  scope for this build and it would be the first thing to add.
 - **`merge_rows` is in the contract but never produced.** Duplicate resolution
   currently deletes rather than merges.
 - **A failing provider degrades, it does not fail loudly enough.** A provider that
