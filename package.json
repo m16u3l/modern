@@ -10,7 +10,8 @@
     "typecheck": "next typegen && tsc --noEmit",
     "test": "vitest run",
     "db:generate": "node --env-file-if-exists=.env.local node_modules/drizzle-kit/bin.cjs generate",
-    "db:push": "node --env-file-if-exists=.env.local node_modules/drizzle-kit/bin.cjs push"
+    "db:push": "node --env-file-if-exists=.env.local node_modules/drizzle-kit/bin.cjs push",
+    "eval": "node --env-file-if-exists=.env.local --import tsx scripts/eval.mts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.116.0",

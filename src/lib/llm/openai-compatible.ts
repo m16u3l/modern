@@ -52,17 +52,20 @@ export class OpenAiCompatibleLlm implements LlmPort {
           },
         });
       } catch (error) {
-        // Plenty of free models accept json_object but not a full schema.
+        // Plenty of free models accept json_object but not a full schema. The
+        // shape instruction is appended to the user turn rather than sent as a
+        // trailing system message: some providers (Groq's compound models)
+        // reject any request whose last message is not from the user.
         if (!isSchemaUnsupported(error)) throw error;
+        const [system, user] = messages;
         return this.client.chat.completions.create({
           model: this.model,
           temperature: 0,
           messages: [
-            ...messages,
+            system,
             {
-              role: "system" as const,
-              content:
-                'Reply with JSON only, shaped as {"verdicts": [{"candidateId": string, "rowId": string, "action": string, "proposedValue": string|null, "confidence": number, "rationale": string}]}.',
+              role: "user" as const,
+              content: `${user.content}\n\nReply with JSON only, shaped as {"verdicts": [{"candidateId": string, "rowId": string, "action": string, "proposedValue": string|null, "confidence": number, "rationale": string}]}.`,
             },
           ],
           response_format: { type: "json_object" },

@@ -45,3 +45,4 @@ PRESENTATION.html
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+evals/
