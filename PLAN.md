@@ -30,8 +30,8 @@ known-correct answer for every issue in the demo dataset, which turns the repo
 into an evaluation bench without fabricating a test set.
 
 **Parameters**: ~20h/week over 6 weeks (~120h). Roughly 50/50 between extending
-this repo and building new ones from scratch. Budget $0 through week 5, then
-~$50 of rented GPU.
+the app and building from scratch in [`labs/`](labs/). Budget $0 through week 5,
+then ~$50 of rented GPU.
 
 **Study rule**: every concept that appears while building goes into
 [`LEARNING.md`](LEARNING.md) — what it is, why it matters, where I saw it — in
@@ -48,11 +48,19 @@ produces a number in week 1's eval harness.*
 | Wk | Topic | Where | Cost | Status |
 |---|---|---|---|---|
 | 1 | Evals and the model landscape | this repo | $0 | **Done** — [`EVALS.md`](EVALS.md) |
-| 2 | Running open weights yourself | new repo + this one | $0 | **In progress** — first local number in [`EVALS.md`](EVALS.md) |
-| 3 | Harness: routing, proxy, observability | this repo + new repo | $0 | Not started |
-| 4 | Real retrieval (embeddings, hybrid, reranking) | this repo + new repo | $0 | Not started |
-| 5 | Agents: loops, tools, multi-agent | this repo + new repo | $0 | Not started |
-| 6 | Real serving (vLLM) and fine-tuning (LoRA) | rented GPU | ~$50 | Not started |
+| 2 | Running open weights yourself | app + [`labs/local-inference`](labs/local-inference/) | $0 | **In progress** — first local number in [`EVALS.md`](EVALS.md) |
+| 3 | Harness: routing, proxy, observability | app + [`labs/gateway`](labs/gateway/) | $0 | Not started |
+| 4 | Real retrieval (embeddings, hybrid, reranking) | app + [`labs/rag`](labs/rag/) | $0 | Not started |
+| 5 | Agents: loops, tools, multi-agent | app + [`labs/agents`](labs/agents/) | $0 | Not started |
+| 6 | Real serving (vLLM) and fine-tuning (LoRA) | [`labs/serving`](labs/serving/), rented GPU | ~$50 | Not started |
+
+**One repo, not five.** Every week has an *app* half — code that ships inside the
+CSV tool — and a *lab* half built from scratch to understand what the app half is
+using. The labs were originally going to be separate repos; they live in
+[`labs/`](labs/) instead, because two copies of the ground truth in
+`src/lib/fixtures.ts` would make the tables in `EVALS.md` incomparable, and a
+comparable table is the only thing this plan promises. They are excluded from the
+Next build, from `tsconfig.json` and from lint, so a lab cannot break the deploy.
 
 ---
 
@@ -86,9 +94,9 @@ was 94%).
 context window and KV cache, prefill vs decode tokens/s, RAM/VRAM requirements,
 why a quantised 7B can beat a badly served 70B.
 
-**New repo — `local-inference-lab`**: Ollama as the quick entry point,
-`llama.cpp` compiled by hand, MLX for comparison on Apple Silicon. Benchmark
-script measuring tokens/s by quantisation and context size.
+**Lab — [`labs/local-inference`](labs/local-inference/)**: Ollama as the quick
+entry point, `llama.cpp` compiled by hand, MLX for comparison on Apple Silicon.
+Benchmark script measuring tokens/s by quantisation and context size.
 
 **Wire back**: `OPENAI_COMPATIBLE_BASE_URL=http://localhost:11434/v1` — the
 adapter already supports it, and the week-1 harness already ships an
@@ -112,10 +120,10 @@ using week 1's accuracy-by-type table. That table already suggests the shape:
 `suspicious_value` at half the latency, and only collapses on `fuzzy_duplicate` —
 so 12 of 18 cases could go to the cheap model.
 
-**Build B — new repo, LiteLLM proxy**: one endpoint in front of Groq + Gemini +
-Ollama; this repo points at it by changing one `BASE_URL`. Virtual keys, budgets,
-retries, load balancing — and learning which problems belong to the code and
-which to the proxy.
+**Build B — [`labs/gateway`](labs/gateway/), LiteLLM proxy**: one endpoint in
+front of Groq + Gemini + Ollama; the app points at it by changing one `BASE_URL`.
+Virtual keys, budgets, retries, load balancing — and learning which problems
+belong to the code and which to the proxy.
 
 **Deliverable**: cost/quality before and after the router, visible in `/trace`.
 
@@ -134,9 +142,9 @@ embeddings vs. hybrid — in the week-1 harness. Fuzzy duplicates are exactly th
 cases that escalate to a model today, so improving there makes the whole pipeline
 cheaper.
 
-**Build B — new repo, minimal RAG with no framework**: ingest → chunk → embed →
-store → retrieve → rerank → generate, by hand. Then the same with a framework,
-documenting what it saved and what it hid.
+**Build B — [`labs/rag`](labs/rag/), minimal RAG with no framework**: ingest →
+chunk → embed → store → retrieve → rerank → generate, by hand. Then the same with
+a framework, documenting what it saved and what it hid.
 
 **Deliverable**: `RETRIEVAL.md` with recall@k for the three strategies, and their
 effect on the rule-resolution rate (66% today).
@@ -156,7 +164,8 @@ router, and tool calling so the model can request more rows instead of only
 receiving the ones handed to it. The `maxDuration = 60` ceiling on the route
 forces rethinking the chunking.
 
-**Build B — new repo, multi-agent stack**: planner/worker/critic roles.
+**Build B — [`labs/agents`](labs/agents/), multi-agent stack**:
+planner/worker/critic roles.
 
 **Deliverable**: one-shot vs. loop measured in the same harness. Does accuracy go
 up, and how much more does it cost?
@@ -183,14 +192,18 @@ hosted ones, with cost per million tokens computed from the GPU price.
 
 ---
 
-## New repos this produces
+## What [`labs/`](labs/) produces
 
-| Repo | Week | What it demonstrates |
+| Lab | Week | What it demonstrates |
 |---|---|---|
-| `local-inference-lab` | 2 | Quantisation, tokens/s, llama.cpp/MLX |
-| `llm-gateway` (LiteLLM) | 3 | Routing, budgets, infra-level fallbacks |
-| `rag-from-scratch` | 4 | Retrieval without a framework, then with one |
-| `agent-stack` | 5 | Multi-agent, roles, loops |
+| [`local-inference`](labs/local-inference/) | 2 | Quantisation, tokens/s, llama.cpp/MLX |
+| [`gateway`](labs/gateway/) | 3 | Routing, budgets, infra-level fallbacks (LiteLLM) |
+| [`rag`](labs/rag/) | 4 | Retrieval without a framework, then with one |
+| [`agents`](labs/agents/) | 5 | Multi-agent, roles, loops |
+| [`serving`](labs/serving/) | 6 | vLLM throughput, LoRA fine-tuning |
+
+Each one is finished when its result is a row in `EVALS.md` (or `RETRIEVAL.md`
+for week 4) and its concepts are in `LEARNING.md` — not when its code runs.
 
 ---
 

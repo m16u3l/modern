@@ -1,0 +1,3 @@
+# The labs are the from-scratch half of PLAN.md — Python venvs, model weights and
+# GPU scripts that the deployed app never imports. See labs/README.md.
+labs/

@@ -46,3 +46,12 @@ PRESENTATION.html
 *.tsbuildinfo
 next-env.d.ts
 evals/
+
+# labs — artefacts, never the code
+labs/**/.venv/
+labs/**/venv/
+labs/**/__pycache__/
+labs/**/node_modules/
+labs/**/results/
+*.gguf
+*.safetensors
