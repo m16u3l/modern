@@ -4,7 +4,8 @@ Produced by `npm run eval`. Every model receives **exactly the same 18 ambiguous
 candidates** — the ones the rules engine cannot resolve on its own — and is
 scored against the known-correct answers in `src/lib/fixtures.ts`.
 
-Last run: **2026-08-18**. Provider: Groq (free tier).
+Last run: **2026-08-28**. Providers: Groq (free tier) and, since week 2, models
+served locally with Ollama — see [Local models](#local-models-week-2).
 Raw runs in `evals/` (gitignored).
 
 ---
@@ -98,6 +99,70 @@ Building the measurement surfaced two things no manual run would have shown:
 
 ---
 
+## Local models (week 2)
+
+Same 18 candidates, same scoring, served from this machine — Apple M1 Pro,
+16 GB unified memory, Ollama 0.33.2, no API involved. Run **2026-08-28**.
+
+| Model | Quant | Repair acc. | Strict | Value acc. | Answered | No-op merges | Latency | Tokens in/out | Conf. right/wrong |
+|---|---|---|---|---|---|---|---|---|---|
+| qwen2.5:7b @ 16k ctx | Q4_K_M | 44% (8/18) | 11% | 100% (6/6) | 100% | 0 | 148.1s | 4731/1642 | 0.96/0.95 |
+| qwen2.5:7b @ 4k ctx | Q4_K_M | 11% (2/18) | 11% | 0% (0/6) | 61% | 6 | 73.3s | 2050/1011 | 0.90/0.90 |
+
+Both rows are the same weights on the same machine. **The only difference is the
+context window**, and it is worth four times the accuracy.
+
+### The first run measured the serving, not the model
+
+Ollama sizes its default context from available VRAM, and on this machine chose
+`default_num_ctx=4096`. The eval prompt is ~4.7k tokens, so the server did this:
+
+```
+msg="truncating input prompt" limit=2050 prompt=4731 keep=4 new=2050
+```
+
+It dropped the front of the prompt — the column context and half the candidates —
+and answered anyway. No error, no warning on the client side: the OpenAI-compatible
+response is a normal 200. The visible symptoms were **61% answered** (the model
+cannot answer candidates it never received) and 6 `merge_rows` no-ops.
+
+Restarting with `OLLAMA_CONTEXT_LENGTH=16384` moved it to 44% / 100% answered /
+0 no-ops. Nothing about the model changed.
+
+**This is the local-serving equivalent of the `compound` bug in week 1**: a
+configuration default silently degrading output, found by a number rather than by
+reading the code.
+
+### It still does not beat the stub
+
+44% against the deterministic baseline's 56%. Locally served qwen2.5:7b costs
+148 seconds per batch to be worse than calling no model at all — the same verdict
+week 1 reached for `gpt-oss-20b` at 28%, now with the latency of a laptop instead
+of a datacenter.
+
+The collapse is entirely `fuzzy_duplicate`: **0/6**, every one answered
+`no_action` with a rationale that correctly identifies the duplicate —
+*"'Carlos Ruíz' and 'Carlos Ruiz' are likely the same person"* — and then declines
+to act on it. Its other three categories (1/3, 4/5, 3/4) are respectable, and its
+`value acc.` is a perfect 6/6: when it decides to write a replacement, the
+replacement is right.
+
+That is the same shape as `gpt-oss-safeguard-20b` in week 1 (also 0/6 on fuzzy
+duplicates, strong everywhere else), and it is more evidence for the week-3
+router: **this is a per-category weakness, not a general one.**
+
+### Confidence carries no information here
+
+0.96 when right, 0.95 when wrong. The model answered nearly every candidate at
+0.95 regardless of outcome. The `LOW_CONFIDENCE_THRESHOLD` gate of 0.7 in the
+review workspace would let **all ten wrong answers straight through**. Compare
+`gpt-oss-120b`'s 0.84/0.60, where the gate does real work.
+
+A local model is not automatically a safe one: the confidence signal has to be
+measured per model before any threshold built on it means anything.
+
+---
+
 ## Models that could not be measured
 
 | Model | Reason |
@@ -107,7 +172,6 @@ Building the measurement surfaced two things no manual run would have shown:
 | `groq/compound` | 429 — free-tier rate limit on its internal model (llama-4-scout) |
 | `gemini-2.0-flash`, `gemini-2.5-flash` | No `GEMINI_API_KEY` |
 | `deepseek-r1:free` | No `OPENROUTER_API_KEY` |
-| `ollama-local` | Ollama not running (week 2) |
 
 **Note on model catalogues:** four IDs that looked obvious
 (`llama-3.3-70b-versatile`, `llama-3.1-8b-instant`, `qwen/qwen3-32b`,
@@ -127,4 +191,14 @@ npm run eval -- --repeat 3                     # variance across identical runs
 
 Keys: `GROQ_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY`. If `.env.local`'s
 `OPENAI_COMPATIBLE_BASE_URL` matches a model's base URL, the harness reuses
-`OPENAI_COMPATIBLE_API_KEY`.
+`OPENAI_COMPATIBLE_API_KEY`. The `ollama-local` entry needs no key at all.
+
+Locally served models:
+
+```bash
+OLLAMA_CONTEXT_LENGTH=16384 ollama serve                      # 4096 truncates the prompt
+OLLAMA_MODEL=qwen2.5:7b npm run eval -- --models ollama-local
+```
+
+`OLLAMA_CONTEXT_LENGTH` is not optional. At the default the numbers describe a
+truncated prompt, and nothing in the output says so.

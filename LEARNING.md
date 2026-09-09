@@ -391,3 +391,144 @@ from the per-type table, not from model size.
 - Precision vs. recall applied to issue detection (only accuracy is measured here)
 - Benchmark contamination: why public benchmarks age badly
 - Per-million token pricing for each provider, for the cost column
+
+---
+
+# Week 2 — Open weights, served by me
+
+## 20. The context window is a serving parameter, not a model property
+
+**What it is.** A model is trained with a maximum context (`n_ctx_train`), but the
+server decides how much of it to actually allocate. qwen2.5:7b is trained for
+32,768 tokens; Ollama started it at **4,096**, chosen from available VRAM:
+
+```
+msg="vram-based default context" total_vram="11.8 GiB" default_num_ctx=4096
+llama_context: n_ctx_seq (4096) < n_ctx_train (32768) -- the full capacity of the model will not be utilized
+```
+
+The reason it is not free to just ask for the maximum is the **KV cache**: every
+token in the context keeps its key and value vectors in memory for the whole
+generation. The cache is allocated up front for `n_ctx`, so context length is
+bought with RAM, not with compute.
+
+**Why it matters.** "Which model" is the question everyone asks. This is the one
+nobody asks, and here it was worth four times the accuracy — the same weights on
+the same machine scored 11% at 4k and 44% at 16k.
+
+**Where you saw it.** `OLLAMA_CONTEXT_LENGTH=16384 ollama serve`, and the "Local
+models" section of [`EVALS.md`](EVALS.md).
+
+---
+
+## 21. Silent prompt truncation
+
+**What it is.** When the prompt does not fit, the server does not fail — it drops
+tokens and answers anyway:
+
+```
+msg="truncating input prompt" limit=2050 prompt=4731 keep=4 new=2050
+```
+
+`keep=4` means it preserved four tokens from the front (the chat template's
+opening) and discarded the rest of the beginning: the whole column context and
+half the candidates. The HTTP response was a normal 200 with a well-formed JSON
+body. Nothing in the OpenAI-compatible API surface reports it.
+
+Note also `limit=2050`, not 4096: the server reserves the other half of the
+window for the answer it is about to generate. **The usable prompt is roughly
+half of `n_ctx`**, not all of it.
+
+**Why it matters.** This is the worst failure class there is — wrong output that
+looks exactly like right output. The only visible symptom in the harness was
+`Answered 61%`, and that number is only visible because week 1 built a coverage
+metric. Without it the run would have looked like "the local model is bad".
+
+**Where you saw it.** The Ollama server log, cross-read against the `Answered`
+column in [`EVALS.md`](EVALS.md).
+
+---
+
+## 22. Quantisation, and why it was not the problem
+
+**What it is.** `qwen2.5:7b` is `Q4_K_M`: weights stored at ~4 bits instead of 16,
+so a 7.6B model occupies 4.7 GB instead of ~15 GB. `K_M` is the k-quant family at
+medium size — some tensors (attention, the output layer) keep more bits than
+others, because not all weights tolerate the same rounding.
+
+**Why it matters.** Quantisation is where the attention goes when a local model
+underperforms, and here it was **the wrong suspect**: the 33-point swing came
+from the context window, with the quantisation identical in both runs. Rank the
+serving configuration above the weight format when something looks wrong.
+
+**Where you saw it.** `ollama list` → `qwen2.5:7b Q4_K_M 4.68 GB`, and the two
+rows in EVALS.md that share it.
+
+---
+
+## 23. Prefill vs decode
+
+**What it is.** Two different regimes in one request. **Prefill** processes the
+whole prompt in parallel — compute-bound, fast per token. **Decode** produces the
+answer one token at a time, each pass re-reading the entire KV cache —
+memory-bandwidth-bound, and it cannot be parallelised across tokens.
+
+**Why it matters.** It explains why the correct run was *slower* (148s vs 73s)
+while being *better*: it prefilled 4,731 tokens instead of 2,050 and then decoded
+1,642 instead of 1,011. It also says where optimisation effort goes — on a laptop
+the ceiling is memory bandwidth during decode, not FLOPS.
+
+**Where you saw it.** The `Latency` and `Tokens in/out` columns for the two
+qwen2.5:7b rows in [`EVALS.md`](EVALS.md).
+
+---
+
+## 24. Local does not mean safe: flat confidence
+
+**What it is.** qwen2.5:7b returned 0.95-0.96 confidence on almost every verdict —
+0.96 when right, 0.95 when wrong. The distributions are indistinguishable.
+
+**Why it matters.** `LOW_CONFIDENCE_THRESHOLD = 0.7` (`src/lib/contracts.ts:134`) is
+built on the assumption that confidence separates good answers from bad ones. For
+this model it does not, so the gate would pass all ten wrong verdicts to the user
+as high-confidence suggestions. Compare `gpt-oss-120b` at 0.84/0.60, where the
+gate is doing real work.
+
+**Concept 6 said calibration has to be measured. This is the case where a model
+that is merely mediocre becomes dangerous instead**, because the mediocrity is
+invisible downstream.
+
+**Where you saw it.** The `Conf. right/wrong` column, and
+`LOW_CONFIDENCE_THRESHOLD` at `src/lib/contracts.ts:134`, applied in
+`src/components/workspace/diff.tsx:83`.
+
+---
+
+## 25. The same per-category collapse, from a different model
+
+**What it is.** qwen2.5:7b scores 1/3, 4/5 and 3/4 on the three cell-level issue
+types — and **0/6** on `fuzzy_duplicate`. Its rationales identify the duplicates
+correctly (*"'Carlos Ruíz' and 'Carlos Ruiz' are likely the same person"*) and
+then return `no_action` anyway.
+
+**Why it matters.** `gpt-oss-safeguard-20b` failed in week 1 with the exact same
+shape: 3/3, 5/5, 4/4, then 0/6. Two unrelated models, two providers, one shared
+weakness — deciding to **delete** something is a different task from deciding to
+correct it, and small models will describe the duplicate rather than act on it.
+
+This is the strongest argument yet for the week-3 router: the failure is
+per-category and therefore routable, and it says a router keyed on issue type
+beats one keyed on model size.
+
+**Where you saw it.** The "Accuracy by issue type" tables in
+[`EVALS.md`](EVALS.md), week 1 and week 2 side by side.
+
+---
+
+## To read on your own (week 2)
+
+- GGUF k-quants: what `Q4_K_M` protects and what it rounds away
+- Flash attention and paged KV cache (`kv_unified`, the slots in the server log)
+- Speculative decoding, and why it helps decode but not prefill
+- MLX vs llama.cpp on Apple Silicon: unified memory, Metal kernels
+- Continuous batching — the concept week 6's vLLM work is built on

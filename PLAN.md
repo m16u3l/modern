@@ -48,7 +48,7 @@ produces a number in week 1's eval harness.*
 | Wk | Topic | Where | Cost | Status |
 |---|---|---|---|---|
 | 1 | Evals and the model landscape | this repo | $0 | **Done** — [`EVALS.md`](EVALS.md) |
-| 2 | Running open weights yourself | new repo + this one | $0 | Not started |
+| 2 | Running open weights yourself | new repo + this one | $0 | **In progress** — first local number in [`EVALS.md`](EVALS.md) |
 | 3 | Harness: routing, proxy, observability | this repo + new repo | $0 | Not started |
 | 4 | Real retrieval (embeddings, hybrid, reranking) | this repo + new repo | $0 | Not started |
 | 5 | Agents: loops, tools, multi-agent | this repo + new repo | $0 | Not started |
