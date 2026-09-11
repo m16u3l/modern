@@ -72,7 +72,7 @@ export async function POST(
 
   try {
     const {
-      review: { verdicts, usage },
+      review: { verdicts, usage, breakdown },
       provider,
       degradedFrom,
     } = await reviewWithFallback(llm, {
@@ -151,8 +151,14 @@ export async function POST(
 
     // Recorded against whoever actually answered, never the provider that was
     // asked. A degraded batch spends no tokens, so `recordUsage` writes nothing
-    // and the cost report stays honest by omission.
-    await recordUsage(id, provider.id, provider.model, usage);
+    // and the cost report stays honest by omission. A router answers with one
+    // entry per model it used, so /trace shows what each of them cost rather
+    // than one total attributed to the routing table.
+    for (const entry of breakdown ?? [
+      { provider: provider.id, model: provider.model, usage },
+    ]) {
+      await recordUsage(id, entry.provider, entry.model, entry.usage);
+    }
 
     const remaining = await countAmbiguousIssues(id);
     const processed = dataset.enrichCursor + pending.length;

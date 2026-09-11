@@ -12,6 +12,7 @@ import {
   FakeLlm,
   AnthropicLlm,
   OpenAiCompatibleLlm,
+  RouterLlm,
   type CandidateIssue,
   type LlmPort,
 } from "./index";
@@ -97,6 +98,17 @@ function contractFor(name: string, create: () => LlmPort | null) {
 
 contractFor("FakeLlm", () => new FakeLlm());
 
+// The router is an LlmPort like any other, so it answers to the same contract
+// without the contract knowing it exists.
+contractFor(
+  "RouterLlm",
+  () =>
+    new RouterLlm({
+      routes: [{ types: ["fuzzy_duplicate"], port: new FakeLlm() }],
+      fallback: new FakeLlm(),
+    }),
+);
+
 contractFor("AnthropicLlm", () =>
   process.env.ANTHROPIC_API_KEY
     ? new AnthropicLlm({ apiKey: process.env.ANTHROPIC_API_KEY })
@@ -127,6 +139,31 @@ describe("getLlm", () => {
     });
 
     expect(llm.id).toBe("anthropic");
+  });
+
+  it("selects the router when both of its models are named", () => {
+    const llm = getLlm({
+      LLM_PROVIDER: "router",
+      OPENAI_COMPATIBLE_BASE_URL: "https://api.groq.com/openai/v1",
+      OPENAI_COMPATIBLE_API_KEY: "gsk-test",
+      ROUTER_DUPLICATE_MODEL: "openai/gpt-oss-120b",
+      ROUTER_DEFAULT_MODEL: "openai/gpt-oss-safeguard-20b",
+    });
+
+    expect(llm.id).toBe("router");
+    expect(llm.model).toBe(
+      "fuzzy_duplicate→openai/gpt-oss-120b, *→openai/gpt-oss-safeguard-20b",
+    );
+  });
+
+  it("falls back to the fake adapter when only one router model is set", () => {
+    expect(
+      getLlm({
+        LLM_PROVIDER: "router",
+        OPENAI_COMPATIBLE_BASE_URL: "https://api.groq.com/openai/v1",
+        ROUTER_DUPLICATE_MODEL: "openai/gpt-oss-120b",
+      }).id,
+    ).toBe("fake");
   });
 
   it("selects any OpenAI-compatible provider from two variables", () => {

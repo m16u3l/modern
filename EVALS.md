@@ -161,6 +161,259 @@ review workspace would let **all ten wrong answers straight through**. Compare
 A local model is not automatically a safe one: the confidence signal has to be
 measured per model before any threshold built on it means anything.
 
+### Q8_0: twice the bits, no accuracy
+
+Same weights at a second quantisation. Both rows re-run **2026-09-08** in one
+sitting, because the 2026-08-28 row above was measured on a machine that had just
+finished installing things and its latency is not comparable to anything.
+
+| Model | Quant | On disk | Repair acc. | Strict | Value acc. | Latency | Tokens in/out | Conf. right/wrong |
+|---|---|---|---|---|---|---|---|---|
+| qwen2.5:7b @ 16k ctx | Q4_K_M | 4.7 GB | 44% (8/18) | 11% | 100% (6/6) | 100.0s | 4731/1642 | 0.96/0.95 |
+| qwen2.5:7b-instruct-q8_0 @ 16k ctx | Q8_0 | 8.1 GB | 39% (7/18) | 6% | 100% (6/6) | 96.1s | 4731/1376 | 0.96/0.88 |
+
+**Doubling the bits per weight bought nothing.** The one-candidate difference
+(8/18 vs 7/18) is inside the noise of an 18-item set; what is not noise is that
+the two runs are identical on three of the four issue types:
+
+| Quant | fuzzy_duplicate | missing_value | suspicious_value | type_mismatch |
+|---|---|---|---|---|
+| Q4_K_M | 0/6 | 1/3 | 4/5 | 3/4 |
+| Q8_0 | 0/6 | 0/3 | 4/5 | 3/4 |
+
+The `fuzzy_duplicate` collapse — 0/6, the thing that keeps this model below the
+56% stub — **is not a rounding artefact**. It survives at 8 bits, so it is the
+model's judgment about deleting rows, not the quantisation, and no amount of
+precision will fix it. The 44% row costs 4.7 GB; the 39% row costs 8.1 GB.
+
+Q4_K_M also reproduced its 2026-08-28 score exactly (8/18, and the same
+`value acc.` of 6/6), which is worth as much as any new number: the harness is
+repeatable across eleven days on a locally served model.
+
+FP16 was the third quantisation the plan asked for and **it does not fit on this
+machine**: 7.62 B parameters at 16 bits is ~15.2 GB of weights against the
+11.3 GiB Ollama reports Metal will give it (`gpu memory ... available="11.3 GiB"`,
+75% of 16 GB). Not measured, ruled out by arithmetic.
+
+### Throughput: prefill and decode, measured
+
+`labs/local-inference/bench.py`, same 4,700-token prompt as the eval, 128 tokens
+generated, median of 3 runs after a discarded warm-up. Ollama 0.33.2.
+
+| Model | ctx | Prompt tok sent → seen | Prefill tok/s | Decode tok/s | Resident |
+|---|---|---|---|---|---|
+| qwen2.5:7b Q4_K_M | 4,096 | 4,700 → 2,050 **truncated** | 246.8 | 24.6 | 4.74 GB |
+| qwen2.5:7b Q4_K_M | 8,192 | 4,700 → 4,724 | 198.9 | 21.9 | 5.12 GB |
+| qwen2.5:7b Q4_K_M | 16,384 | 4,700 → 4,725 | 203.8 | 21.9 | 5.61 GB |
+| qwen2.5:7b Q8_0 | 4,096 | 4,700 → 2,050 **truncated** | 275.3 | 19.4 | 7.88 GB |
+| qwen2.5:7b Q8_0 | 8,192 | 4,700 → 4,725 | 259.4 | 18.4 | 8.12 GB |
+| qwen2.5:7b Q8_0 | 16,384 | 4,700 → 4,726 | 256.9 | 18.3 | 8.60 GB |
+
+Three things fall out of this table.
+
+**Q8_0 prefills faster and decodes slower than Q4_K_M** — 257 vs 204 tok/s
+prefill, 18.3 vs 21.9 tok/s decode. That is concept 23 showing up as two
+numbers: prefill is compute-bound, and the K-quant's block unpacking costs
+arithmetic that plain 8-bit does not; decode is memory-bandwidth-bound, so the
+larger model streams more bytes per token and pays for it. It also explains why
+the Q8 eval *finished sooner* (96.1s vs 100.0s) while being slower per token —
+it generated 1,376 tokens instead of 1,642. Total latency is set by output length
+as much as by speed.
+
+**The context window costs memory, not speed.** 8k → 16k is 203.8 vs 198.9 tok/s
+prefill, indistinguishable, against +0.5 GB resident. The KV cache is ~56 KB per
+token here (28 layers × 4 KV heads × 128 dims × 2 × 2 bytes), so 16k of window is
+~0.9 GB whether or not it is used. Given week 2's headline — a truncated window
+cost 33 accuracy points — **the window should be sized generously and the price
+paid in RAM.**
+
+**Truncation is not "half the window", as this lab first wrote it.** The 4k rows
+truncate a 4,725-token prompt to 2,050, but the 8k rows pass the same prompt
+whole, and 4,725 is well past half of 8,192. The rule that fits both: the server
+truncates only when the prompt exceeds the *whole* window, and then drops to
+about half of it.
+
+### The serving stack costs 13% of prefill
+
+Same GGUF file, same machine, same 4,700-token prompt, three ways of running it:
+
+| Stack | Context | Prefill tok/s | Decode tok/s |
+|---|---|---|---|
+| `llama-bench` (llama.cpp, compiled here) | sized to fit | 239.8 ± 1.7 | 24.4 ± 1.6 |
+| `llama-server` at `-c 16384`, via `bench.py` | 16,384 | 233.8 | 22.2 |
+| Ollama at `num_ctx=16384`, via `bench.py` | 16,384 | 203.8 | 21.9 |
+
+Ollama runs llama.cpp underneath, and **serving the same weights through it costs
+~13% of prefill throughput** (203.8 vs 233.8) while leaving decode alone. The KV
+allocation is not the explanation — llama.cpp at the identical 16k window is
+still 233.8 — and neither is flash attention, which `llama-bench -fa 0,1` puts at
+4% (230.6 vs 240.6). What remains is Ollama's own request path.
+
+The first two rows are also the check on the measurement: `bench.py` driving
+`llama-server` lands within 2.5% of `llama-bench`, the canonical tool, on the
+same stack.
+
+### MLX vs llama.cpp, at a size that fits the bandwidth available
+
+The plan wanted this at 7B. Hugging Face's CDN served this machine at ~300 KB/s
+on 2026-09-08 — four hours for the 4.3 GB MLX build of Qwen2.5-7B, against 8 MB/s
+from Ollama's registry for the GGUF — so the comparison was done at **0.5B**,
+where both runtimes have the model in minutes. Same prompt, 3,979 tokens, 128
+generated, median of 3.
+
+| Runtime | Format | On disk | Prefill tok/s | Decode tok/s |
+|---|---|---|---|---|
+| MLX (`mlx_lm.generate`) | MLX 4-bit | 265 MB | 4,030 | 185.2 |
+| llama.cpp (`llama-bench`) | GGUF Q4_K_M | 374 MB | 3,189 ± 5 | 156.3 ± 6 |
+| Ollama (`bench.py`) | GGUF Q4_K_M | 374 MB | 3,206 | 133.6 |
+
+MLX comes out ahead — 26% on prefill, 19% on decode against llama.cpp — but
+**these are not identical weights**, and the disk sizes say so: 265 MB against
+374 MB for the same 494 M parameters. `Q4_K_M` is a mixed scheme that keeps
+attention and output tensors at higher precision; the MLX build is closer to
+uniform 4-bit. Part of MLX's advantage is that it is carrying fewer bits, and
+this measurement does not separate the runtime from the format.
+
+Two caveats worth more than the ranking:
+
+- **A 0.5B result does not transfer to 7B.** Ollama's prefill matches llama.cpp
+  exactly here (3,206 vs 3,189) while costing 13% at 7B, and its decode is 15%
+  *behind* here while matching at 7B. The overhead profile inverts between the
+  two sizes, which is the clearest possible warning against extrapolating.
+- **MLX's first run is a third of its speed**: 1,524 tok/s of prefill, then
+  3,947 / 4,030 / 4,039 on the next three. It compiles its Metal kernels on first
+  use. Benchmarking MLX without discarding a warm-up measures the compiler.
+
+Peak memory is reported as 1.11 GB by MLX against 0.58 GB resident for Ollama,
+but those are different quantities — MLX's peak includes activations for a
+4k-token prompt, Ollama's is the model plus its KV allocation — and they are not
+compared here.
+
+### A benchmark that measured the cache
+
+The first version of `bench.py` reported **25,972 tok/s of prefill**, which is
+roughly a hundred times what this laptop can do. Both servers keep a prefix
+cache: sending the identical prompt on every repetition meant every run after the
+first skipped prefill entirely and timed a cache lookup. Prepending a nonce so
+each run has a unique prefix brought it to 248 tok/s.
+
+The flag is kept (`--reuse-cache`) because the wrong number is worth being able
+to reproduce on demand:
+
+```
+qwen2.5:7b  248 tok/s prefill      # unique prefix per run
+qwen2.5:7b  25,585 tok/s prefill   # --reuse-cache
+```
+
+Same shape as the two failures week 1 and week 2 already found: a default that
+silently improves the number instead of the result.
+
+---
+
+## Routing (week 3)
+
+The week-1 table said `gpt-oss-safeguard-20b` matched the 120B on three issue
+types and scored **0/6** on `fuzzy_duplicate`. `src/lib/llm/router.ts` acts on
+that: duplicates to the large model, everything else to the small one. It
+implements `LlmPort`, so the harness scores it exactly like a model.
+
+All runs **2026-09-09**, same 18 candidates.
+
+| Run | Repair acc. | missing | type | suspicious | fuzzy | Latency | Tokens in |
+|---|---|---|---|---|---|---|---|
+| gpt-oss-120b #1 | 94% (17/18) | 2/3 | 4/4 | 5/5 | 6/6 | 5.5s | 4,215 |
+| gpt-oss-120b #2 | 94% (17/18) | 2/3 | 4/4 | 5/5 | 6/6 | 5.2s | 4,215 |
+| gpt-oss-safeguard-20b #1 | 94% (17/18) | 2/3 | 4/4 | 5/5 | **6/6** | 8.2s | 4,215 |
+| gpt-oss-safeguard-20b #2 | 61% (11/18) | 2/3 | 4/4 | 5/5 | **0/6** | 52.5s | 4,215 |
+| gpt-oss-safeguard-20b (earlier) | 61% (11/18) | 2/3 | 4/4 | 5/5 | **0/6** | 4.7s | 4,215 |
+| **router** #1 | **94% (17/18)** | 3/3 | 4/4 | 5/5 | 5/6 | 31.1s | 5,918 |
+| **router** #2 | **94% (17/18)** | 2/3 | 4/4 | 5/5 | 6/6 | 5.1s | 5,918 |
+| **router** #3 | **94% (17/18)** | 2/3 | 4/4 | 5/5 | 6/6 | 34.6s | 5,918 |
+
+### The router did not raise the ceiling. It raised the floor
+
+94% is exactly what `gpt-oss-120b` scores on its own, so **the headline number
+is a tie** — and anyone reporting the router as an improvement on the strength of
+one run of each would be reporting noise.
+
+What the repeats show instead is that the small model is **bimodal on
+`fuzzy_duplicate`**: 6/6 in one run and 0/6 in two others, at `temperature: 0`,
+same prompt, same day, with its other three categories identical to the token in
+all three. It is not weak at duplicates; it either does all six or none of them.
+Week 1 saw one run and wrote down "0/6 — a per-category weakness". That was half
+of a coin flip recorded as a property.
+
+The router scored 17/18 in all three of its runs. It is the only configuration
+here that did. Sending the duplicates to the model that is 6/6 every time is what
+makes the system's score stop depending on which mode the cheap model woke up in.
+**That is the argument for routing: not a better average, a smaller variance.**
+
+### Routing costs 40% more input tokens
+
+The harness now prints where a routed batch went:
+
+| Model | Tokens in/out |
+|---|---|
+| openai/gpt-oss-safeguard-20b | 3,132 / 2,087 |
+| openai/gpt-oss-120b | 2,786 / 1,173 |
+| **total** | **5,918** vs 4,215 for one model |
+
+The 1,703-token difference is exactly the column context, which every route needs
+and each one pays for. `port.ts` calls that prefix "identical for every batch of
+the same dataset, which is what makes it worth caching on the provider side" —
+and splitting the batch across two models is precisely what stops one cache from
+covering it. **A router trades input tokens for routing**, and at two routes the
+trade is +40% before a single verdict is produced.
+
+Whether that trade pays depends on prices the free tier hides — which is what
+the proxy below was able to answer.
+
+### Through the proxy, with prices attached (labs/gateway)
+
+[`labs/gateway`](labs/gateway/) puts a LiteLLM proxy in front of the same models,
+so the app asks for `reviewer-large` and `reviewer-small` and never names a
+vendor. The router runs unchanged against those names — the only edit was the
+strings in the harness.
+
+| Run | What it is | Repair acc. | Latency |
+|---|---|---|---|
+| proxy-large | one model, `reviewer-large` → 120B | 94% (17/18) | 7.7s |
+| proxy-router | the app's router over the proxy's names | 94% (17/18) | 6.1s |
+| proxy-any | the proxy load-balancing across both models | 61% (11/18) | 3.1s |
+
+**`proxy-any` is the useful failure.** One name, two deployments, and
+`latency-based-routing` picks whichever answers faster — which is the small
+model, in whichever mode it happens to be in. Load balancing distributes *load*;
+it has no opinion about quality, and asking it to make a quality decision gives
+you 11/18. That is the line between the two builds this week: **which model
+should see this issue belongs in the app, and everything about getting the call
+through belongs in the proxy.**
+
+And because the proxy prices every call from its own cost map, the question the
+free tier could not answer becomes arithmetic:
+
+| Run | Tokens in/out | Cost |
+|---|---|---|
+| single 120B, whole batch | 4,215 / 2,552 | **$0.002048** |
+| router → safeguard-20b | 3,132 / 1,565 | $0.000646 |
+| router → 120B | 2,786 / 1,441 | $0.001283 |
+| **router, total** | 5,918 / 3,006 | **$0.001929** |
+
+**The router is 6% cheaper at the same 94%** — after paying for the duplicated
+prefix, and while producing *more* output tokens (3,006 vs 2,552), because two
+thirds of them came from the model that charges less for them. Six percent is a
+thin margin for the complexity, and it is thin for a specific reason: the 1,703
+duplicated input tokens eat most of what routing saves. The lever that would
+widen it is not a better routing table, it is not sending the prefix twice.
+
+### Latency says nothing here
+
+5.1s, 31.1s and 34.6s for identical work, against 5.2-8.2s for single models and
+one 52.5s outlier among them. Free-tier queueing dominates everything else, so
+these runs cannot support a latency claim in either direction. The router
+dispatches its routes concurrently, so its floor is the slower of the two — the
+5.1s run — but a floor observed once is not a measurement.
+
 ---
 
 ## Models that could not be measured

@@ -1,0 +1,55 @@
+# The proxy's view of the world. Everything here is infrastructure concern:
+# what a name resolves to, what happens when a call fails, who is allowed to
+# spend how much. None of it is application logic — that lives in
+# src/lib/llm/router.ts, which decides *which* name to ask for.
+
+model_list:
+  # The two models the app's router dispatches between, behind stable names.
+  # The app no longer needs to know that "large" is a Groq-hosted 120B.
+  - model_name: reviewer-large
+    litellm_params:
+      model: groq/openai/gpt-oss-120b
+      api_key: os.environ/GROQ_API_KEY
+
+  - model_name: reviewer-small
+    litellm_params:
+      model: groq/openai/gpt-oss-safeguard-20b
+      api_key: os.environ/GROQ_API_KEY
+
+  # One name, two deployments: this is what load balancing means here. A
+  # request for `reviewer-any` goes to whichever is answering faster.
+  - model_name: reviewer-any
+    litellm_params:
+      model: groq/openai/gpt-oss-120b
+      api_key: os.environ/GROQ_API_KEY
+  - model_name: reviewer-any
+    litellm_params:
+      model: groq/openai/gpt-oss-safeguard-20b
+      api_key: os.environ/GROQ_API_KEY
+
+  # Week 2's model, as the last resort: slow and worse, but free and on this
+  # machine, so it answers when the free tier says no.
+  - model_name: reviewer-local
+    litellm_params:
+      model: ollama_chat/qwen2.5:7b
+      api_base: http://host.docker.internal:11434
+
+router_settings:
+  # The app's adapter already retries 429/5xx (see port.ts, `withRetry`). This
+  # is the same job one layer down, and the duplication is the question this
+  # lab exists to answer.
+  num_retries: 3
+  allowed_fails: 3
+  cooldown_time: 30
+  routing_strategy: latency-based-routing
+  # Degradation the app cannot express: a model group that is down falls to
+  # another *model*, before the app ever sees an error.
+  fallbacks:
+    - reviewer-large: ["reviewer-small", "reviewer-local"]
+    - reviewer-small: ["reviewer-local"]
+
+litellm_settings:
+  drop_params: true
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY

@@ -525,6 +525,121 @@ beats one keyed on model size.
 
 ---
 
+## 26. The prefix cache, and the benchmark that measured it
+
+**What it is.** Both llama.cpp and Ollama keep the KV cache of the last prompt.
+Send a prompt sharing a prefix with it and the server skips prefill for the
+shared part. Send the *identical* prompt and it skips prefill entirely.
+
+**Why it matters.** The first version of `bench.py` sent the same prompt on every
+repetition and reported **25,972 tok/s of prefill** — about a hundred times what
+an M1 Pro can do. It was timing a cache lookup. A nonce at the front of each run
+(the front, so the whole prefix is invalidated) brought it to 248 tok/s, which is
+the real figure.
+
+The generalisation: **a benchmark measures the whole stack, including the parts
+built to avoid the work you meant to time.** Whenever a number comes out an order
+of magnitude too good, look for what got skipped before believing it.
+
+**Where you saw it.** `vary()` in `labs/local-inference/bench.py`, its
+`--reuse-cache` flag, and the two numbers in
+[`EVALS.md`](EVALS.md#a-benchmark-that-measured-the-cache).
+
+---
+
+## 27. What more bits actually buy
+
+**What it is.** The same weights at Q4_K_M (4.7 GB) and Q8_0 (8.1 GB), on the
+same 18 candidates: **44% and 39%**. One candidate apart on an 18-item set — no
+measurable accuracy difference — for 1.7× the memory.
+
+**Why it matters.** Concept 22 said quantisation was the wrong suspect for the
+33-point context-window swing. This is the direct test of that claim, and it
+holds: three of the four issue types score *identically* at both precisions, and
+the `fuzzy_duplicate` collapse (0/6) survives at 8 bits intact. **A model's
+refusal to delete a row is a judgment, not a rounding error**, and no amount of
+precision addresses it.
+
+The practical rule for a laptop: take the smallest quantisation that holds the
+score, and spend the memory you saved on context window instead — which *is*
+worth 33 points.
+
+**Where you saw it.** The Q8_0 table in
+[`EVALS.md`](EVALS.md#q8_0-twice-the-bits-no-accuracy).
+
+---
+
+## 28. The memory arithmetic of serving
+
+**What it is.** What a served model occupies is weights + KV cache + activations,
+against a budget that is not all of RAM. Ollama reports the budget on this
+machine as `gpu memory ... library=Metal available="11.3 GiB"` — 75% of 16 GB,
+because macOS will not let the GPU wire down more than that.
+
+The KV cache is the part that is easy to forget:
+
+    2 (K and V) × layers × kv_heads × head_dim × bytes × tokens
+
+For qwen2.5-7B — 28 layers, 4 KV heads (GQA), 128 dims, fp16 — that is ~56 KB per
+token, so a 16k window reserves ~0.9 GB whether or not it is filled. The measured
+resident sizes match: 4.74 GB at 4k → 5.61 GB at 16k.
+
+**Why it matters.** It is what rules FP16 out here without an experiment: 7.62 B
+parameters × 2 bytes is ~15.2 GB of weights against an 11.3 GiB budget. It also
+explains the shape of the throughput table — the window costs RAM, not speed,
+so the right move is to buy the window and pay in memory.
+
+**Where you saw it.** The `Resident` column in
+[`EVALS.md`](EVALS.md#throughput-prefill-and-decode-measured), and the
+`sched.go` memory lines in the Ollama server log.
+
+---
+
+## 29. The serving stack is not free
+
+**What it is.** The same GGUF, the same machine, the same prompt, run three ways:
+`llama-bench` at 239.8 tok/s prefill, `llama-server` at a matched 16k window at
+233.8, and Ollama at 203.8. Decode is the same everywhere (~22 tok/s). Ollama
+*is* llama.cpp underneath, and it still costs **~13% of prefill**.
+
+**Why it matters.** Two things. First, the convenience layer has a price, and
+it is worth knowing its size before optimising anything else — 13% is smaller
+than the 33 points a bad context window cost, and larger than the 4% flash
+attention was worth here. Second, this is how a measurement gets trusted:
+`bench.py` driving `llama-server` landed within 2.5% of `llama-bench`, the tool
+the llama.cpp project ships for exactly this, which is what makes the Ollama gap
+a finding rather than a bug in my script.
+
+**Where you saw it.** [`EVALS.md`](EVALS.md#the-serving-stack-costs-13-of-prefill),
+and `labs/local-inference/README.md` for how llama.cpp was built.
+
+---
+
+## 30. Comparing runtimes is harder than comparing models
+
+**What it is.** The same model in two runtimes: MLX at 4,030 tok/s prefill and
+185 tok/s decode, llama.cpp at 3,189 and 156. MLX wins by ~25% — except the MLX
+build is 265 MB and the GGUF is 374 MB for the same 494 M parameters, because
+`Q4_K_M` keeps some tensors above 4 bits and the MLX build does not. **The
+comparison is confounded**: fewer bits means fewer bytes to move, and decode is
+bandwidth-bound.
+
+**Why it matters.** A runtime benchmark has to hold the weights constant, and
+"both are 4-bit" is not constant. Two further traps showed up in the same
+afternoon: MLX's first run is a third of its later speed because it compiles
+Metal kernels on first use, and Ollama's overhead against llama.cpp *inverts*
+between 0.5B (matches on prefill, 15% behind on decode) and 7B (13% behind on
+prefill, matches on decode) — so a result at one size predicts nothing at
+another.
+
+The habit this leaves: before reporting that A beats B, write down what else
+changed between A and B. Here it was the quantisation scheme, the warm-up state,
+and the model size — three confounds in a two-row table.
+
+**Where you saw it.** [`EVALS.md`](EVALS.md#mlx-vs-llamacpp-at-a-size-that-fits-the-bandwidth-available).
+
+---
+
 ## To read on your own (week 2)
 
 - GGUF k-quants: what `Q4_K_M` protects and what it rounds away
@@ -532,3 +647,91 @@ beats one keyed on model size.
 - Speculative decoding, and why it helps decode but not prefill
 - MLX vs llama.cpp on Apple Silicon: unified memory, Metal kernels
 - Continuous batching — the concept week 6's vLLM work is built on
+
+---
+
+## 31. One run is not a property
+
+**What it is.** Week 1 measured `gpt-oss-safeguard-20b` at **0/6** on
+`fuzzy_duplicate` and wrote that down as a per-category weakness — the fact the
+whole week-3 router was designed around. Three runs later, at `temperature: 0`
+and on the same prompt: **6/6**, then 0/6, then 0/6. Its other three categories
+are identical to the verdict in all three runs.
+
+**Why it matters.** The model is not weak at duplicates; it is **bimodal** —
+it either commits to deleting all six or refuses all six. A single observation of
+a bimodal variable looks exactly like a property, and every conclusion drawn from
+it inherits a coin flip. Concept 7 said `temperature: 0` is not determinism; this
+is what that costs when a design decision is built on one sample.
+
+The repair is cheap and was available all along: `npm run eval -- --repeat 3`.
+Anything that is going to become an architectural decision gets repeated first.
+
+**Where you saw it.** The five `gpt-oss-safeguard-20b` rows in
+[`EVALS.md`](EVALS.md#routing-week-3).
+
+---
+
+## 32. What routing actually buys
+
+**What it is.** The router scores 94% — exactly what `gpt-oss-120b` scores alone.
+The headline is a tie. But across three runs the router scored 17/18 every time,
+while the model it replaces on 12 of the 18 candidates swung between 17/18 and
+11/18.
+
+**Why it matters.** The intuition behind routing is "cheap model where it is good
+enough, expensive model where it is not", and that framing predicts a **cost**
+win. The measured win is a **variance** win: the system's score stopped depending
+on which mode the cheap model woke up in. The cost win was real but small — 6%,
+because splitting a batch means sending the shared prompt prefix twice.
+
+Both halves are worth carrying forward: a router is a reliability device that
+happens to save money, and the thing to optimise is not the routing table but the
+duplicated prefix.
+
+**Where you saw it.** [`EVALS.md`](EVALS.md#the-router-did-not-raise-the-ceiling-it-raised-the-floor),
+and `src/lib/llm/router.ts`.
+
+---
+
+## 33. Load balancing is not routing
+
+**What it is.** The proxy can put two models behind one name and send each
+request to whichever is answering faster. Asked to review the same 18 candidates
+that way, it scored **11/18** — against 17/18 for the same models addressed
+deliberately.
+
+**Why it matters.** Load balancing distributes *load*. It is indifferent to
+quality, so pointing it at deployments that differ in quality means the answer
+you get is the answer you happened to get. This is the line between the week's
+two builds, and it is not about which layer is more capable:
+
+| Belongs in the app (`router.ts`) | Belongs in the proxy (LiteLLM) |
+|---|---|
+| which model should see this issue type | retries, cooldowns, failover to another model |
+| decisions justified by the eval table | virtual keys, per-key budgets, spend logs |
+| anything you would want a test for | anything you would want to change without deploying |
+
+**Where you saw it.** The `proxy-any` row in
+[`EVALS.md`](EVALS.md#through-the-proxy-with-prices-attached-labsgateway).
+
+---
+
+## 34. A gateway is where prices live
+
+**What it is.** Every call this repo makes is on a free tier, so `llm_usage`
+records tokens and the cost column has always been a blank. Routing the same
+calls through LiteLLM produced `$0.002048` for the single model and `$0.001929`
+for the router, per batch, from the proxy's own cost map.
+
+**Why it matters.** The 6% saving in concept 32 is only sayable because something
+in the path knew what a token costs. That is a real reason to run a gateway that
+has nothing to do with routing: it is the one place that sees every call, so it
+is the only place that can price them, cap them (`max_budget` on a virtual key)
+and attribute them. The app's own `llm_usage` table answers "how many tokens";
+the gateway answers "how many dollars, and who spent them".
+
+**Where you saw it.** `/spend/logs` on the proxy, and the cost table in
+[`EVALS.md`](EVALS.md#through-the-proxy-with-prices-attached-labsgateway).
+
+---

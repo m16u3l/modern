@@ -1,14 +1,16 @@
 import { AnthropicLlm, DEFAULT_ANTHROPIC_MODEL } from "./anthropic";
 import { FakeLlm } from "./fake";
 import { OpenAiCompatibleLlm } from "./openai-compatible";
+import { RouterLlm } from "./router";
 import type { LlmPort, ReviewInput, ReviewOutput } from "./port";
 
 export * from "./port";
 export { AnthropicLlm } from "./anthropic";
 export { FakeLlm } from "./fake";
 export { OpenAiCompatibleLlm } from "./openai-compatible";
+export { RouterLlm, type Route } from "./router";
 
-export type ProviderId = "anthropic" | "openai-compatible" | "fake";
+export type ProviderId = "anthropic" | "openai-compatible" | "router" | "fake";
 
 /** The variables the factory reads. Accepts process.env or a literal in tests. */
 export type LlmEnv = {
@@ -18,6 +20,10 @@ export type LlmEnv = {
   OPENAI_COMPATIBLE_BASE_URL?: string;
   OPENAI_COMPATIBLE_API_KEY?: string;
   OPENAI_COMPATIBLE_MODEL?: string;
+  /** The model that answers fuzzy_duplicate candidates. */
+  ROUTER_DUPLICATE_MODEL?: string;
+  /** The model that answers every other issue type. */
+  ROUTER_DEFAULT_MODEL?: string;
   [key: string]: string | undefined;
 };
 
@@ -33,6 +39,29 @@ export function getLlm(env: LlmEnv = process.env): LlmPort {
     return new AnthropicLlm({
       apiKey: env.ANTHROPIC_API_KEY,
       model: env.ANTHROPIC_MODEL ?? DEFAULT_ANTHROPIC_MODEL,
+    });
+  }
+
+  if (
+    requested === "router" &&
+    env.OPENAI_COMPATIBLE_BASE_URL &&
+    env.ROUTER_DUPLICATE_MODEL &&
+    env.ROUTER_DEFAULT_MODEL
+  ) {
+    const build = (model: string) =>
+      new OpenAiCompatibleLlm({
+        apiKey: env.OPENAI_COMPATIBLE_API_KEY || "not-needed",
+        baseURL: env.OPENAI_COMPATIBLE_BASE_URL!,
+        model,
+      });
+
+    // The split week 1 measured: duplicates need the large model, the other
+    // three issue types do not. See EVALS.md, "accuracy by issue type".
+    return new RouterLlm({
+      routes: [
+        { types: ["fuzzy_duplicate"], port: build(env.ROUTER_DUPLICATE_MODEL) },
+      ],
+      fallback: build(env.ROUTER_DEFAULT_MODEL),
     });
   }
 

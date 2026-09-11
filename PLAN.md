@@ -48,8 +48,8 @@ produces a number in week 1's eval harness.*
 | Wk | Topic | Where | Cost | Status |
 |---|---|---|---|---|
 | 1 | Evals and the model landscape | this repo | $0 | **Done** — [`EVALS.md`](EVALS.md) |
-| 2 | Running open weights yourself | app + [`labs/local-inference`](labs/local-inference/) | $0 | **In progress** — first local number in [`EVALS.md`](EVALS.md) |
-| 3 | Harness: routing, proxy, observability | app + [`labs/gateway`](labs/gateway/) | $0 | Not started |
+| 2 | Running open weights yourself | app + [`labs/local-inference`](labs/local-inference/) | $0 | **Done** — quantisation, throughput and serving-stack numbers in [`EVALS.md`](EVALS.md) |
+| 3 | Harness: routing, proxy, observability | app + [`labs/gateway`](labs/gateway/) | $0 | **Done** — the router ties on score and wins on variance; see [`EVALS.md`](EVALS.md#routing-week-3) |
 | 4 | Real retrieval (embeddings, hybrid, reranking) | app + [`labs/rag`](labs/rag/) | $0 | Not started |
 | 5 | Agents: loops, tools, multi-agent | app + [`labs/agents`](labs/agents/) | $0 | Not started |
 | 6 | Real serving (vLLM) and fine-tuning (LoRA) | [`labs/serving`](labs/serving/), rented GPU | ~$50 | Not started |
@@ -105,6 +105,27 @@ adapter already supports it, and the week-1 harness already ships an
 **Deliverable**: a "local models" section in `EVALS.md` on the same metrics as
 the cloud ones, so local and hosted sit in one comparable table.
 
+**Result**: [`EVALS.md`](EVALS.md#local-models-week-2), and `bench.py` in the lab
+for the throughput half. Headlines — the context window was worth **33 accuracy
+points** (11% → 44%) and the quantisation was worth **none** (Q8_0 at 39% against
+Q4_K_M's 44%, one candidate apart on 18, for 1.7× the memory). The
+`fuzzy_duplicate` collapse to 0/6 survives at 8 bits, so it is the model's
+judgment and not a rounding artefact. Serving the same GGUF through Ollama rather
+than llama.cpp costs 13% of prefill; flash attention is worth 4%; the context
+window costs RAM and not speed.
+
+Two measurements that were wrong before they were right, both found by a number
+being implausible rather than by reading code: a first benchmark reporting 26,000
+tok/s of prefill because the servers' prefix cache was answering every repetition,
+and MLX's first run at a third of its later speed because it compiles Metal
+kernels on first use.
+
+Two things this week did **not** produce, and why: FP16 does not fit (~15.2 GB of
+weights against Metal's 11.3 GiB here), and the MLX comparison was made at 0.5B
+rather than 7B because Hugging Face's CDN was serving this machine at ~300 KB/s.
+The 0.5B numbers do not transfer — Ollama's overhead against llama.cpp inverts
+between the two sizes.
+
 ---
 
 ## Week 3 — Harness engineering
@@ -126,6 +147,30 @@ Virtual keys, budgets, retries, load balancing — and learning which problems
 belong to the code and which to the proxy.
 
 **Deliverable**: cost/quality before and after the router, visible in `/trace`.
+
+**Result**: [`EVALS.md`](EVALS.md#routing-week-3). `src/lib/llm/router.ts` is an
+`LlmPort` that groups a batch by issue type and dispatches each group, so it
+passes the existing contract test without the contract being told it exists.
+`/trace` shows the split because the enrich route now writes one `llm_usage` row
+per model that answered, rather than one total attributed to the routing table.
+
+The headline is **a tie, not a win**: 94% for the router, 94% for
+`gpt-oss-120b` alone. What repeating the runs found instead is that
+`gpt-oss-safeguard-20b` is **bimodal** on `fuzzy_duplicate` — 6/6 in one run,
+0/6 in two others, at `temperature: 0` — so week 1's "0/6, a per-category
+weakness", the very premise this router was designed from, was one side of a coin
+flip recorded as a property. The router scored 17/18 in all three of its runs and
+is the only configuration here that did. **Routing bought variance, not accuracy.**
+
+It also bought 6% of cost ($0.001929 vs $0.002048 per batch, priced by the proxy)
+— thin, because splitting a batch sends the shared column context to both models
+and that is +1,703 input tokens before any verdict exists.
+
+[`labs/gateway`](labs/gateway/) settled the other question. The proxy's
+`reviewer-any` group — one name, both models, latency-based load balancing —
+scored **11/18** against 17/18 for the same models addressed deliberately, which
+is the line between the two builds: quality dispatch belongs in the app, and
+everything about getting the call through belongs in the proxy.
 
 ---
 

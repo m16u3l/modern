@@ -18,7 +18,7 @@ import {
   FIXTURE_SUGGESTIONS,
 } from "../src/lib/fixtures";
 import { profileDataset, splitFindings } from "../src/lib/profiling";
-import { FakeLlm, OpenAiCompatibleLlm } from "../src/lib/llm";
+import { FakeLlm, OpenAiCompatibleLlm, RouterLlm } from "../src/lib/llm";
 import {
   renderColumnContext,
   unansweredCandidates,
@@ -44,12 +44,20 @@ type ModelSpec = {
   apiKeyEnv: string;
   /** USD per million tokens, for the cost column. 0 marks a free tier. */
   price?: { input: number; output: number };
+  /**
+   * Set when the entry is not one model but a routing table over several. The
+   * harness scores it exactly like a model, which is the point: a router that
+   * cannot be compared to the models it replaces proves nothing.
+   */
+  routes?: { duplicate: string; default: string };
 };
 
 const GROQ = "https://api.groq.com/openai/v1";
 const GEMINI = "https://generativelanguage.googleapis.com/v1beta/openai/";
 const OPENROUTER = "https://openrouter.ai/api/v1";
 const OLLAMA = "http://localhost:11434/v1";
+/** labs/gateway, when it is up. Same models, one hop further away. */
+const PROXY = process.env.LITELLM_BASE_URL ?? "http://localhost:4000/v1";
 
 // Verified against GET /v1/models on 2026-08-18. Model catalogues churn fast —
 // four IDs that looked obvious from memory (llama-3.3-70b-versatile among them)
@@ -66,6 +74,30 @@ const MODELS: ModelSpec[] = [
   { label: "gemini-2.5-flash", baseURL: GEMINI, model: "gemini-2.5-flash", apiKeyEnv: "GEMINI_API_KEY" },
   { label: "deepseek-r1-free", baseURL: OPENROUTER, model: "deepseek/deepseek-r1:free", apiKeyEnv: "OPENROUTER_API_KEY" },
   { label: "ollama-local", baseURL: OLLAMA, model: process.env.OLLAMA_MODEL ?? "llama3.1", apiKeyEnv: "OLLAMA_NO_KEY" },
+  // Week 3, through labs/gateway. The model names are the proxy's, not the
+  // provider's — which is the point: the app stops naming vendors.
+  { label: "proxy-large", baseURL: PROXY, model: "reviewer-large", apiKeyEnv: "LITELLM_API_KEY" },
+  { label: "proxy-any", baseURL: PROXY, model: "reviewer-any", apiKeyEnv: "LITELLM_API_KEY" },
+  {
+    label: "proxy-router",
+    baseURL: PROXY,
+    model: "router",
+    apiKeyEnv: "LITELLM_API_KEY",
+    routes: { duplicate: "reviewer-large", default: "reviewer-small" },
+  },
+  // Week 3. The split comes from week 1's accuracy-by-issue-type table:
+  // safeguard-20b matched the 120B everywhere except fuzzy_duplicate, where it
+  // scored 0/6.
+  {
+    label: "router",
+    baseURL: GROQ,
+    model: "router",
+    apiKeyEnv: "GROQ_API_KEY",
+    routes: {
+      duplicate: process.env.ROUTER_DUPLICATE_MODEL ?? "openai/gpt-oss-120b",
+      default: process.env.ROUTER_DEFAULT_MODEL ?? "openai/gpt-oss-safeguard-20b",
+    },
+  },
 ];
 
 // ---------------------------------------------------------------------------
@@ -172,6 +204,8 @@ type Score = {
   confidenceWhenRight: number;
   confidenceWhenWrong: number;
   byType: Record<string, { total: number; correct: number }>;
+  /** Set for a routing table: what each model behind it actually spent. */
+  breakdown?: Array<{ model: string; inputTokens: number; outputTokens: number }>;
   misses: Array<{
     candidate: string;
     type: string;
@@ -347,7 +381,7 @@ async function main() {
 
     for (let attempt = 1; attempt <= repeat; attempt++) {
       const label = repeat > 1 ? `${spec.label} #${attempt}` : spec.label;
-      const llm = new OpenAiCompatibleLlm({ apiKey, baseURL: spec.baseURL, model: spec.model });
+      const llm = buildPort(spec, apiKey);
       scores.push(await runOnce(label, llm, candidates, columnContext, truth));
       // Free tiers meter per minute and the adapter's backoff only covers 429s
       // it actually receives. Spacing the runs keeps the table comparable.
@@ -356,7 +390,23 @@ async function main() {
   }
 
   report(scores);
+  reportBreakdown(scores);
   writeRun(scores);
+}
+
+/** A spec becomes either one adapter or a router over two of them. */
+function buildPort(spec: ModelSpec, apiKey: string): LlmPort {
+  const adapter = (model: string) =>
+    new OpenAiCompatibleLlm({ apiKey, baseURL: spec.baseURL, model });
+
+  if (!spec.routes) return adapter(spec.model);
+
+  return new RouterLlm({
+    routes: [
+      { types: ["fuzzy_duplicate"], port: adapter(spec.routes.duplicate) },
+    ],
+    fallback: adapter(spec.routes.default),
+  });
 }
 
 async function runOnce(
@@ -370,8 +420,15 @@ async function runOnce(
   const started = Date.now();
 
   try {
-    const { verdicts, usage } = await llm.reviewCandidates({ columnContext, candidates });
+    const { verdicts, usage, breakdown } = await llm.reviewCandidates({ columnContext, candidates });
     const result = score(label, llm.model, candidates, verdicts, truth, Date.now() - started, usage);
+    if (breakdown) {
+      result.breakdown = breakdown.map((entry) => ({
+        model: entry.model,
+        inputTokens: entry.usage.inputTokens,
+        outputTokens: entry.usage.outputTokens,
+      }));
+    }
     console.log(`${result.effectiveCorrect}/${result.total} in ${(result.latencyMs / 1000).toFixed(1)}s`);
     return result;
   } catch (error) {
@@ -392,6 +449,20 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 // ---------------------------------------------------------------------------
 // Output
 // ---------------------------------------------------------------------------
+
+function reportBreakdown(scores: Score[]) {
+  const routed = scores.filter((entry) => entry.breakdown?.length);
+  if (routed.length === 0) return;
+
+  console.log("\n## Where a routed batch went\n");
+  console.log("| Run | Model | Tokens in/out |");
+  console.log("|---|---|---|");
+  for (const entry of routed) {
+    for (const part of entry.breakdown!) {
+      console.log(`| ${entry.label} | ${part.model} | ${part.inputTokens}/${part.outputTokens} |`);
+    }
+  }
+}
 
 function report(scores: Score[]) {
   const pct = (n: number, d: number) => (d === 0 ? "—" : `${((n / d) * 100).toFixed(0)}%`);

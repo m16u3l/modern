@@ -53,9 +53,21 @@ export const llmBatchSchema = z.object({
 
 export type LlmVerdict = z.infer<typeof llmVerdictSchema>;
 
+/** One model's share of a batch, when more than one answered it. */
+export type UsageBreakdown = {
+  provider: string;
+  model: string;
+  usage: TokenUsage;
+};
+
 export type ReviewOutput = {
   verdicts: LlmVerdict[];
   usage: TokenUsage;
+  /**
+   * Set only by a port that dispatched the batch across several models, so the
+   * cost of each is recorded separately rather than as one anonymous total.
+   */
+  breakdown?: UsageBreakdown[];
 };
 
 export interface LlmPort {
