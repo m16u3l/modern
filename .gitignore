@@ -53,5 +53,6 @@ labs/**/venv/
 labs/**/__pycache__/
 labs/**/node_modules/
 labs/**/results/
+labs/**/.cache/
 *.gguf
 *.safetensors

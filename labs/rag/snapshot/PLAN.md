@@ -194,12 +194,11 @@ a framework, documenting what it saved and what it hid.
 **Deliverable**: `RETRIEVAL.md` with recall@k for the three strategies, and their
 effect on the rule-resolution rate (66% today).
 
-**Result so far**: [`RETRIEVAL.md`](RETRIEVAL.md). Build B is done through
-retrieval and reranking — 25 questions over this repo's own write-ups, labelled
-by section heading so one query set scores every chunking strategy, with BM25,
-RRF and a pointwise reranker written out rather than imported. **Hybrid retrieval
-reranked by a local `qwen2.5:7b` leads at 84% recall@5**, against 70% for the
-same retrieval unreranked.
+**Result so far**: [`RETRIEVAL.md`](RETRIEVAL.md). Build B is done to the end of
+retrieval — 25 questions over this repo's own write-ups, labelled by section
+heading so one query set scores every chunking strategy, with BM25 and RRF
+written out rather than imported. Dense retrieval over section chunks leads at
+**70% recall@5**.
 
 The headline is not which retriever won. It is that **the first comparison
 measured the labelling rule instead of the retrieval**: fixed windows scored 33%
@@ -211,33 +210,13 @@ term falls), and that hybrid search is insurance against bad chunks rather than
 an upgrade over good ones: +12 points on fixed windows, 0 on section chunks,
 where it also cost MRR.
 
-Reranking is the largest single win of the week and the honest way to report it
-is not "+14 points" but **14 of the 16 points available**: a reranker only
-reorders what retrieval already fetched, so its ceiling is the retriever's
-recall@10 (86%). That framing says what to do next — no reranker tuning gets past
-86%, so the next point comes from retrieval or chunking. It costs 500 local model
-calls and 125 seconds against 0.05s for the retrieval it reorders, which is why
-it sits behind a flag.
-
-Two measurements were wrong before they were right, both caught by a guard rather
-than by reading code. `all-minilm` appeared to match a model six times its size;
-it holds 512 tokens, about 500 characters of this corpus, so every one of its
-numbers had been computed on silently truncated text — concept 21 again, one
-layer down. Fixing it exposed a confound in the repair itself (the budget and the
-model were moving in the same column) and a bug in the chunker: the budget was
-never enforced, because a markdown table is a single paragraph and the splitter
-refused to split one.
-
-The corpus is now frozen in `labs/rag/snapshot/`, because it is this repo's own
-documents and writing up a result was editing it — two runs a day apart scored 74
-and then 97 chunks. Several rows moved 2 to 4 points from that drift alone, which
-is direct evidence for the resolution warning: every gap reported as a tie is
-smaller than the noise a routine edit introduces. What the lab needs next is more
-queries, not another retriever.
+Three comparisons came back inside the noise of a 25-query set and are reported
+as ties rather than dressed up: hybrid vs dense on good chunks, a 45 MB
+embedding model vs a 274 MB one, and the instruction prefixes `nomic-embed-text`
+was trained with. What the lab needs next is more queries, not another retriever.
 
 **Blocked**: Build A needs pgvector, and the Supabase project no longer exists
-(`PROGRESS.md`, 2026-08-28). Still open in the lab: generation, and rebuilding
-the same pipeline with a framework to see what it saves and what it hides.
+(`PROGRESS.md`, 2026-08-28). Reranking and generation are still open in the lab.
 
 ---
 

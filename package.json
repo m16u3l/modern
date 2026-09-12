@@ -11,7 +11,9 @@
     "test": "vitest run",
     "db:generate": "node --env-file-if-exists=.env.local node_modules/drizzle-kit/bin.cjs generate",
     "db:push": "node --env-file-if-exists=.env.local node_modules/drizzle-kit/bin.cjs push",
-    "eval": "node --env-file-if-exists=.env.local --import tsx scripts/eval.mts"
+    "eval": "node --env-file-if-exists=.env.local --import tsx scripts/eval.mts",
+    "rag": "tsx labs/rag/run.ts",
+    "rag:snapshot": "cp LEARNING.md EVALS.md PLAN.md labs/rag/snapshot/ && echo 'corpus refreshed — RETRIEVAL.md numbers are now stale'"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.116.0",
